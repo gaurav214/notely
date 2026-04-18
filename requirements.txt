@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+streamlit
+pillow
+requests
+python-multipart
+python-dotenv
+anthropic
+PyPDF2
+httpx
