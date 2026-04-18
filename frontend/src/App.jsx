@@ -92,6 +92,8 @@ const Icon = {
   File: (p = {}) => <svg {...iconProps} {...p}><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" /><polyline points="13 2 13 9 20 9" /></svg>,
   Archive: (p = {}) => <svg {...iconProps} {...p}><polyline points="21 8 21 21 3 21 3 8" /><rect x="1" y="3" width="22" height="5" /><line x1="10" y1="12" x2="14" y2="12" /></svg>,
   CheckCircle: (p = {}) => <svg {...iconProps} {...p}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>,
+  Pencil: (p = {}) => <svg {...iconProps} {...p}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>,
+  Download: (p = {}) => <svg {...iconProps} {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>,
 };
 
 /* ── Utility components ──────────────────────────────────────────────────────── */
@@ -603,9 +605,44 @@ function FeatureCard({ icon, title, description, tag, onClick, disabled }) {
   );
 }
 
+function NoteModal({ entry, onClose }) {
+  const isNotes = entry.type === 'notes' || entry.type === 'btech_notes';
+  useEffect(() => {
+    function onKey(e) { if (e.key === 'Escape') onClose(); }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card note-modal-card" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <span className="modal-title">{entry.name || entry.filename}</span>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {isNotes && entry.notes && (
+              <button className="btn-secondary btn-sm" onClick={() => downloadNotesPDF(entry)}>
+                <Icon.Download /> PDF
+              </button>
+            )}
+            <button className="modal-close" onClick={onClose}><Icon.X /></button>
+          </div>
+        </div>
+        <div className="note-modal-body">
+          {isNotes && entry.notes && <MarkdownBody content={entry.notes} />}
+          {entry.type === 'competitive_flashcards' && entry.flashcards && (
+            <div className="cards-grid">
+              {entry.flashcards.map((c, i) => <FlipCard key={i} index={i} question={c.question} answer={c.answer} />)}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Dashboard({ user, onNavigate }) {
   const [history, setHistory] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
+  const [previewEntry, setPreviewEntry] = useState(null);
   const remaining = user.daily_limit - user.daily_used;
 
   useEffect(() => {
@@ -682,11 +719,19 @@ function Dashboard({ user, onNavigate }) {
             </div>
           ) : (
             <div className="history-list">
-              {history.map(entry => <HistoryItem key={entry.id} entry={entry} compact />)}
+              {history.map(entry => (
+                <HistoryItem key={entry.id} entry={entry} compact user={user}
+                  onRename={(action, e) => {
+                    if (action === 'open') { setPreviewEntry(e); return; }
+                    setHistory(h => h.map(x => x.id === action ? { ...x, name: e } : x));
+                  }}
+                />
+              ))}
             </div>
           )}
         </section>
       </div>
+      {previewEntry && <NoteModal entry={previewEntry} onClose={() => setPreviewEntry(null)} />}
     </div>
   );
 }
@@ -1136,33 +1181,118 @@ function FlashcardsPage({ user, onNavigate, onUsageUpdate, toast }) {
 
 /* ── History ────────────────────────────────────────────────────────────────── */
 
-function HistoryItem({ entry, compact, expanded, onToggle }) {
+function downloadNotesPDF(entry) {
+  const html = marked.parse(entry.notes || '');
+  const win = window.open('', '_blank');
+  win.document.write(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>${entry.name || entry.filename}</title>
+  <style>
+    body{font-family:Georgia,serif;max-width:800px;margin:40px auto;padding:0 24px;color:#1a1a1a;line-height:1.75;}
+    h1,h2,h3{color:#1a1a1a;margin-top:1.5em;}
+    h1{font-size:1.8em;border-bottom:2px solid #e11d48;padding-bottom:8px;}
+    code{background:#f4f4f4;padding:2px 6px;border-radius:4px;font-size:.88em;font-family:monospace;}
+    pre{background:#f4f4f4;padding:16px;border-radius:8px;overflow-x:auto;}
+    pre code{background:none;padding:0;}
+    blockquote{border-left:4px solid #e11d48;margin:0;padding-left:16px;color:#555;}
+    table{border-collapse:collapse;width:100%;}
+    td,th{border:1px solid #ddd;padding:8px 12px;}
+    th{background:#f9f9f9;}
+    @media print{body{margin:0;}}
+  </style>
+</head>
+<body>
+  <h1>${entry.name || entry.filename}</h1>
+  ${html}
+  <script>window.onload=()=>{window.print();}<\/script>
+</body>
+</html>`);
+  win.document.close();
+}
+
+function HistoryItem({ entry, compact, expanded, onToggle, user, onRename }) {
   const isNotes = entry.type === 'notes' || entry.type === 'btech_notes';
   const typeLabel = isNotes ? 'NOTES' : 'CARDS';
   const badgeClass = isNotes ? 'badge-notes' : 'badge-cards';
+  const [renaming, setRenaming] = useState(false);
+  const [nameVal, setNameVal] = useState(entry.name || entry.filename);
+  const inputRef = useRef();
+
+  useEffect(() => { if (renaming) inputRef.current?.focus(); }, [renaming]);
+
+  async function submitRename() {
+    const trimmed = nameVal.trim();
+    if (!trimmed || trimmed === (entry.name || entry.filename)) { setRenaming(false); return; }
+    try {
+      await api.post('/api/rename-history', { token: user.token, id: entry.id, name: trimmed });
+      onRename(entry.id, trimmed);
+    } catch { setNameVal(entry.name || entry.filename); }
+    setRenaming(false);
+  }
 
   if (compact) {
     return (
-      <div className="history-item">
+      <div className="history-item clickable" onClick={!renaming ? () => onRename?.('open', entry) : undefined}>
         <span className={`badge ${badgeClass}`}>{typeLabel}</span>
-        <span className="history-name">{entry.name || entry.filename}</span>
+        {renaming ? (
+          <input
+            ref={inputRef}
+            className="rename-input"
+            value={nameVal}
+            onChange={e => setNameVal(e.target.value)}
+            onBlur={submitRename}
+            onKeyDown={e => { if (e.key === 'Enter') submitRename(); if (e.key === 'Escape') { setNameVal(entry.name || entry.filename); setRenaming(false); } }}
+            onClick={e => e.stopPropagation()}
+          />
+        ) : (
+          <span className="history-name">{entry.name || entry.filename}</span>
+        )}
         <span className="history-date">{formatDate(entry.created_at)}</span>
+        {user && (
+          <button className="icon-btn" title="Rename" onClick={e => { e.stopPropagation(); setRenaming(true); }}>
+            <Icon.Pencil />
+          </button>
+        )}
       </div>
     );
   }
 
   return (
     <div className={`history-item expandable ${expanded ? 'expanded' : ''}`}>
-      <button className="history-item-header" onClick={onToggle}>
+      <div className="history-item-header" onClick={!renaming ? onToggle : undefined} style={{ cursor: renaming ? 'default' : 'pointer' }}>
         <span className={`badge ${badgeClass}`}>{typeLabel}</span>
-        <span className="history-name">{entry.name || entry.filename}</span>
+        {renaming ? (
+          <input
+            ref={inputRef}
+            className="rename-input"
+            value={nameVal}
+            onChange={e => setNameVal(e.target.value)}
+            onBlur={submitRename}
+            onKeyDown={e => { if (e.key === 'Enter') submitRename(); if (e.key === 'Escape') { setNameVal(entry.name || entry.filename); setRenaming(false); } }}
+            onClick={e => e.stopPropagation()}
+          />
+        ) : (
+          <span className="history-name">{entry.name || entry.filename}</span>
+        )}
         <span className="history-date">{formatDate(entry.created_at)}</span>
+        <button className="icon-btn" title="Rename" onClick={e => { e.stopPropagation(); setRenaming(true); }}>
+          <Icon.Pencil />
+        </button>
         <span className="history-chevron">{expanded ? '▲' : '▼'}</span>
-      </button>
+      </div>
       {expanded && (
         <div className="history-content">
           {isNotes && entry.notes && (
-            <MarkdownBody content={entry.notes} />
+            <>
+              <div className="history-actions">
+                <button className="btn-secondary btn-sm" onClick={() => downloadNotesPDF(entry)}>
+                  <Icon.Download /> Download PDF
+                </button>
+              </div>
+              <MarkdownBody content={entry.notes} />
+            </>
           )}
           {entry.type === 'competitive_flashcards' && entry.flashcards && (
             <div className="cards-grid" style={{ marginTop: 10 }}>
@@ -1186,6 +1316,10 @@ function HistoryPage({ user, onNavigate, toast }) {
       .catch(() => toast.show('Failed to load history', 'error'))
       .finally(() => setLoading(false));
   }, [user.token]);
+
+  function handleRename(id, newName) {
+    setHistory(h => h.map(e => e.id === id ? { ...e, name: newName } : e));
+  }
 
   return (
     <div className="page">
@@ -1212,7 +1346,8 @@ function HistoryPage({ user, onNavigate, toast }) {
             {history.map(entry => (
               <HistoryItem key={entry.id} entry={entry}
                 expanded={expanded === entry.id}
-                onToggle={() => setExpanded(expanded === entry.id ? null : entry.id)} />
+                onToggle={() => setExpanded(expanded === entry.id ? null : entry.id)}
+                user={user} onRename={handleRename} />
             ))}
           </div>
         )}
