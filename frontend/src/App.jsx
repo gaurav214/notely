@@ -1,7 +1,30 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { marked } from 'marked';
+import renderMathInElement from 'katex/contrib/auto-render';
 
 marked.setOptions({ breaks: true, gfm: true });
+
+const KATEX_OPTS = {
+  delimiters: [
+    { left: '$$', right: '$$', display: true },
+    { left: '$',  right: '$',  display: false },
+    { left: '\\(', right: '\\)', display: false },
+    { left: '\\[', right: '\\]', display: true },
+  ],
+  throwOnError: false,
+  errorColor: '#ef4444',
+};
+
+function MarkdownBody({ content }) {
+  const ref = useRef();
+  useEffect(() => {
+    if (ref.current && content) renderMathInElement(ref.current, KATEX_OPTS);
+  }, [content]);
+  return (
+    <div ref={ref} className="markdown-body"
+      dangerouslySetInnerHTML={{ __html: marked.parse(content) }} />
+  );
+}
 
 const API_BASE = import.meta.env.VITE_API_URL ?? '';
 
@@ -802,8 +825,7 @@ function NotesPage({ user, onNavigate, onUsageUpdate, toast }) {
                     {copied ? <><Icon.Check width={12} height={12} /> Copied</> : 'Copy'}
                   </button>
                 </div>
-                <div className="markdown-body"
-                  dangerouslySetInnerHTML={{ __html: marked.parse(result.notes) }} />
+                <MarkdownBody content={result.notes} />
               </div>
             </div>
           ) : loading ? (
@@ -1140,7 +1162,7 @@ function HistoryItem({ entry, compact, expanded, onToggle }) {
       {expanded && (
         <div className="history-content">
           {isNotes && entry.notes && (
-            <div className="markdown-body" dangerouslySetInnerHTML={{ __html: marked.parse(entry.notes) }} />
+            <MarkdownBody content={entry.notes} />
           )}
           {entry.type === 'competitive_flashcards' && entry.flashcards && (
             <div className="cards-grid" style={{ marginTop: 10 }}>
