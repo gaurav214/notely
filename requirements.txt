@@ -1,6 +1,5 @@
 fastapi
-uvicorn
-streamlit
+uvicorn[standard]
 pillow
 requests
 python-multipart
