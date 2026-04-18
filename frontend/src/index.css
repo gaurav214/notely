@@ -403,7 +403,14 @@ h1, h2, h3, h4 {
   margin-bottom: 44px;
 }
 .dashboard-greeting { font-size: 12.5px; color: var(--c-text-3); margin-bottom: 3px; }
-.dashboard-username { font-size: 26px; font-weight: 600; letter-spacing: -0.03em; }
+.dashboard-username { font-size: 26px; font-weight: 600; letter-spacing: -0.03em; margin: 0; }
+.dashboard-username-row { display: flex; align-items: center; gap: 8px; }
+.dashboard-name-input {
+  font-size: 26px; font-weight: 600; letter-spacing: -0.03em;
+  border: none; border-bottom: 2px solid var(--c-accent);
+  outline: none; background: transparent; color: var(--c-text-1);
+  width: 260px;
+}
 
 .usage-card {
   display: flex;

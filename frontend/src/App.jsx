@@ -639,11 +639,26 @@ function NoteModal({ entry, onClose }) {
   );
 }
 
-function Dashboard({ user, onNavigate }) {
+function Dashboard({ user, onNavigate, onUpdateDisplayName }) {
   const [history, setHistory] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [previewEntry, setPreviewEntry] = useState(null);
+  const [editingName, setEditingName] = useState(false);
+  const [nameVal, setNameVal] = useState(user.display_name || displayName(user.username));
+  const nameRef = useRef();
   const remaining = user.daily_limit - user.daily_used;
+
+  useEffect(() => { if (editingName) nameRef.current?.focus(); }, [editingName]);
+
+  async function submitNameEdit() {
+    const trimmed = nameVal.trim();
+    setEditingName(false);
+    if (!trimmed || trimmed === (user.display_name || displayName(user.username))) return;
+    try {
+      await api.post('/api/update-display-name', { token: user.token, display_name: trimmed });
+      onUpdateDisplayName(trimmed);
+    } catch { setNameVal(user.display_name || displayName(user.username)); }
+  }
 
   useEffect(() => {
     api.get(`/api/history?token=${user.token}`)
@@ -660,7 +675,23 @@ function Dashboard({ user, onNavigate }) {
         <div className="dashboard-header">
           <div>
             <p className="dashboard-greeting">Good {getTimeOfDay()}</p>
-            <h1 className="dashboard-username">{displayName(user.username)}</h1>
+            <div className="dashboard-username-row">
+              {editingName ? (
+                <input
+                  ref={nameRef}
+                  className="dashboard-name-input"
+                  value={nameVal}
+                  onChange={e => setNameVal(e.target.value)}
+                  onBlur={submitNameEdit}
+                  onKeyDown={e => { if (e.key === 'Enter') submitNameEdit(); if (e.key === 'Escape') { setNameVal(user.display_name || displayName(user.username)); setEditingName(false); } }}
+                />
+              ) : (
+                <h1 className="dashboard-username">{user.display_name || displayName(user.username)}</h1>
+              )}
+              <button className="icon-btn" title="Edit name" onClick={() => setEditingName(true)}>
+                <Icon.Pencil width={14} height={14} />
+              </button>
+            </div>
           </div>
 
           <div className="usage-card">
@@ -1411,9 +1442,9 @@ export default function App() {
   function handleLogin(data) {
     localStorage.setItem('bn_token', data.token);
     localStorage.setItem('bn_username', data.username);
-    setUser({ token: data.token, username: data.username, daily_used: data.daily_used ?? 0, daily_limit: data.daily_limit ?? 2 });
+    setUser({ token: data.token, username: data.username, display_name: data.display_name || '', daily_used: data.daily_used ?? 0, daily_limit: data.daily_limit ?? 2 });
     setView('dashboard');
-    toast.show(`Welcome, ${displayName(data.username)}`, 'success');
+    toast.show(`Welcome, ${data.display_name || displayName(data.username)}`, 'success');
   }
 
   function handleLogout() {
@@ -1449,7 +1480,7 @@ export default function App() {
       <main className="main-content">
         {view === 'landing' && <LandingPage onGetStarted={() => setView('auth')} />}
         {view === 'auth' && <AuthPage onLogin={handleLogin} onBack={() => setView('landing')} />}
-        {view === 'dashboard' && user && <Dashboard user={user} onNavigate={handleNavigate} />}
+        {view === 'dashboard' && user && <Dashboard user={user} onNavigate={handleNavigate} onUpdateDisplayName={name => setUser(u => ({ ...u, display_name: name }))} />}
         {view === 'notes' && user && <NotesPage user={user} onNavigate={handleNavigate} onUsageUpdate={handleUsageUpdate} toast={toast} />}
         {view === 'flashcards' && user && <FlashcardsPage user={user} onNavigate={handleNavigate} onUsageUpdate={handleUsageUpdate} toast={toast} />}
         {view === 'history' && user && <HistoryPage user={user} onNavigate={handleNavigate} toast={toast} />}

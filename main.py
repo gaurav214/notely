@@ -391,6 +391,7 @@ async def login(request: Request):
     logging.info(f"Login: {username}")
     return {
         "success": True, "token": token, "username": username,
+        "display_name": user.get("display_name") or "",
         "daily_used": get_daily_usage(username), "daily_limit": DAILY_LIMIT
     }
 
@@ -526,7 +527,7 @@ async def rename_history_entry(request: Request):
     username = validate_token(data.get("token", ""))
     if not username:
         raise HTTPException(401, "Invalid session")
-    entry_id = data.get("entry_id", "")
+    entry_id = data.get("id") or data.get("entry_id", "")
     name = data.get("name", "").strip()
     with get_db() as conn:
         cur = conn.cursor()
@@ -535,6 +536,21 @@ async def rename_history_entry(request: Request):
         if cur.rowcount == 0:
             raise HTTPException(404, "Entry not found")
     return {"success": True}
+
+
+@app.post("/api/update-display-name")
+async def update_display_name(request: Request):
+    data = await request.json()
+    username = validate_token(data.get("token", ""))
+    if not username:
+        raise HTTPException(401, "Invalid session")
+    name = data.get("display_name", "").strip()
+    if not name:
+        raise HTTPException(400, "Name cannot be empty")
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET display_name = %s WHERE username = %s", (name, username))
+    return {"success": True, "display_name": name}
 
 
 # ── Processing routes ──────────────────────────────────────────────────────────
