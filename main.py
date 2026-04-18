@@ -333,6 +333,58 @@ async def google_oauth_enabled():
     return {"enabled": bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)}
 
 
+@app.post("/api/feedback")
+async def submit_feedback(request: Request):
+    import smtplib
+    from email.mime.text import MIMEText
+
+    data = await request.json()
+    token = data.get("token", "")
+    username = validate_token(token) or "anonymous"
+    options = data.get("options", [])
+    message = data.get("message", "")
+
+    entry = {
+        "id": str(uuid.uuid4()),
+        "username": username,
+        "options": options,
+        "message": message,
+        "created_at": datetime.now().isoformat(),
+    }
+
+    feedback_file = DATA_DIR / "feedback.json"
+    feedback = []
+    if feedback_file.exists():
+        with open(feedback_file) as f:
+            feedback = json.load(f)
+    feedback.insert(0, entry)
+    with open(feedback_file, "w") as f:
+        json.dump(feedback, f, indent=2)
+
+    # Send email if SMTP is configured
+    smtp_user = os.getenv("SMTP_USER", "")
+    smtp_pass = os.getenv("SMTP_PASSWORD", "")
+    notify_email = os.getenv("NOTIFY_EMAIL", "frakz321@gmail.com")
+    if smtp_user and smtp_pass:
+        try:
+            body = f"From: {username}\n\nSelected:\n" + "\n".join(f"  • {o}" for o in options)
+            if message:
+                body += f"\n\nMessage:\n{message}"
+            msg = MIMEText(body)
+            msg["Subject"] = f"[Notely Feedback] {', '.join(options) or 'Message only'}"
+            msg["From"] = smtp_user
+            msg["To"] = notify_email
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
+                s.login(smtp_user, smtp_pass)
+                s.send_message(msg)
+            logging.info(f"Feedback email sent for {username}")
+        except Exception as e:
+            logging.warning(f"Feedback email failed: {e}")
+
+    logging.info(f"Feedback from {username}: {options}")
+    return {"success": True}
+
+
 @app.get("/auth/google")
 async def google_login():
     if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET):

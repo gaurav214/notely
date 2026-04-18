@@ -121,7 +121,7 @@ function LogoMark({ size = 22 }) {
 
 /* ── Header ─────────────────────────────────────────────────────────────────── */
 
-function Header({ user, onNavigate, view }) {
+function Header({ user, onNavigate, view, onFeedback }) {
   return (
     <header className="header">
       <button className="header-logo" onClick={() => onNavigate('dashboard')}>
@@ -146,10 +146,90 @@ function Header({ user, onNavigate, view }) {
           </div>
           <span className="usage-text">{user.daily_used}/{user.daily_limit}</span>
         </div>
+        <button className="btn btn-ghost btn-sm feedback-header-btn" onClick={onFeedback}>Feedback</button>
         <div className="user-avatar">{displayName(user.username)[0]?.toUpperCase() ?? '?'}</div>
         <button className="btn btn-ghost" onClick={() => onNavigate('logout')}>Sign out</button>
       </div>
     </header>
+  );
+}
+
+/* ── Feedback modal ──────────────────────────────────────────────────────────── */
+
+const FEEDBACK_OPTIONS = [
+  { id: 'dsa',       label: 'Help with DSA' },
+  { id: 'capstone',  label: 'Capstone Project for college' },
+  { id: 'workshop',  label: 'Workshop lecture on a topic' },
+  { id: 'limit',     label: 'Need more daily limit' },
+];
+
+function FeedbackModal({ user, onClose, toast }) {
+  const [selected, setSelected] = useState(new Set());
+  const [message, setMessage] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState(false);
+
+  function toggle(id) {
+    setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
+
+  async function handleSubmit() {
+    setLoading(true);
+    try {
+      await api.post('/api/feedback', { token: user.token, options: [...selected], message: message.trim() });
+      setDone(true);
+      setTimeout(onClose, 2000);
+    } catch {
+      toast.show('Could not send — try again', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal-card">
+        <div className="modal-header">
+          <h2 className="modal-title">Send feedback</h2>
+          <button className="modal-close" onClick={onClose}><Icon.X width={16} height={16} /></button>
+        </div>
+
+        {done ? (
+          <div className="modal-done">
+            <Icon.CheckCircle width={40} height={40} />
+            <p>Thanks! We'll work on it.</p>
+          </div>
+        ) : (
+          <>
+            <p className="modal-sub">What would you like from Notely? Pick all that apply.</p>
+            <div className="feedback-options">
+              {FEEDBACK_OPTIONS.map(opt => (
+                <button key={opt.id}
+                  className={`feedback-chip ${selected.has(opt.id) ? 'selected' : ''}`}
+                  onClick={() => toggle(opt.id)}>
+                  {selected.has(opt.id) && <Icon.Check width={12} height={12} />}
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <div className="form-group" style={{ marginTop: 18 }}>
+              <label className="form-label">Anything else? <span className="form-label-opt">(optional)</span></label>
+              <textarea className="input" rows={3}
+                style={{ height: 'auto', resize: 'vertical' }}
+                placeholder="Tell us what you need…"
+                value={message} onChange={e => setMessage(e.target.value)} />
+            </div>
+            <div className="modal-actions">
+              <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleSubmit}
+                disabled={loading || (selected.size === 0 && !message.trim())}>
+                {loading ? <><Spinner size={13} /> Sending…</> : 'Send feedback'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -896,7 +976,18 @@ function FlashcardsPage({ user, onNavigate, onUsageUpdate, toast }) {
   const [error, setError] = useState('');
   const [studyMode, setStudyMode] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [copied, setCopied] = useState(false);
   const fileRef = useRef();
+
+  async function handleCopyCards() {
+    if (!flashcards) return;
+    const text = flashcards.map((c, i) => `Q${i + 1}: ${c.question}\nA: ${c.answer}`).join('\n\n');
+    if (await copyText(text)) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+      toast.show('Flashcards copied', 'success');
+    }
+  }
 
   function handleFile(f) {
     if (!f) return;
@@ -1002,9 +1093,14 @@ function FlashcardsPage({ user, onNavigate, onUsageUpdate, toast }) {
           <>
             <div className="cards-header">
               <h2 className="cards-title">{flashcards.length} flashcards</h2>
-              <button className="btn btn-primary" onClick={() => setStudyMode(true)}>
-                <Icon.Play width={12} height={12} /> Study mode
-              </button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-secondary btn-sm" onClick={handleCopyCards}>
+                  {copied ? <><Icon.Check width={12} height={12} /> Copied</> : 'Copy all'}
+                </button>
+                <button className="btn btn-primary" onClick={() => setStudyMode(true)}>
+                  <Icon.Play width={12} height={12} /> Study mode
+                </button>
+              </div>
             </div>
             <div className="cards-grid">
               {flashcards.map((c, i) => <FlipCard key={i} index={i} question={c.question} answer={c.answer} />)}
@@ -1108,6 +1204,7 @@ function HistoryPage({ user, onNavigate, toast }) {
 export default function App() {
   const [view, setView] = useState('loading');
   const [user, setUser] = useState(null);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const toast = useToast();
 
   useEffect(() => {
@@ -1190,7 +1287,8 @@ export default function App() {
   return (
     <>
       <ToastStack toasts={toast.toasts} />
-      {view !== 'auth' && view !== 'landing' && user && <Header user={user} onNavigate={handleNavigate} view={view} />}
+      {feedbackOpen && user && <FeedbackModal user={user} onClose={() => setFeedbackOpen(false)} toast={toast} />}
+      {view !== 'auth' && view !== 'landing' && user && <Header user={user} onNavigate={handleNavigate} view={view} onFeedback={() => setFeedbackOpen(true)} />}
       <main className="main-content">
         {view === 'landing' && <LandingPage onGetStarted={() => setView('auth')} />}
         {view === 'auth' && <AuthPage onLogin={handleLogin} onBack={() => setView('landing')} />}
