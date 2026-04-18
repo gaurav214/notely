@@ -7,3 +7,4 @@ python-dotenv
 anthropic
 PyPDF2
 httpx
+psycopg2-binary

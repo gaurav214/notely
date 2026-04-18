@@ -1,8 +1,9 @@
 """
-FastAPI Backend: Smart Learning Notes Generator v4.0
-Auth, daily limits (2 images/day), history, optimised API calls
+Notely Backend v5.0
+Supabase (Postgres) for persistent storage — users, history, usage, feedback.
 """
 
+from contextlib import contextmanager
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,6 +14,8 @@ import httpx
 import json
 import logging
 import os
+import psycopg2
+import psycopg2.extras
 import secrets
 import tempfile
 import uuid
@@ -27,7 +30,7 @@ load_dotenv(override=True)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-app = FastAPI(title="Smart Learning Notes Generator", version="4.0.0")
+app = FastAPI(title="Notely", version="5.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -37,47 +40,112 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Directories ───────────────────────────────────────────────────────────────
+# ── Config ─────────────────────────────────────────────────────────────────────
 
-UPLOAD_DIR = Path(tempfile.gettempdir()) / "learning_uploads"
+UPLOAD_DIR = Path(tempfile.gettempdir()) / "notely_uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
-
-DATA_DIR = Path("data")
-DATA_DIR.mkdir(exist_ok=True)
-HISTORY_DIR = DATA_DIR / "history"
-HISTORY_DIR.mkdir(exist_ok=True)
-
-USERS_FILE = DATA_DIR / "users.json"
-USAGE_FILE = DATA_DIR / "usage.json"
 
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".pdf"}
 MAX_FILE_SIZE = 25 * 1024 * 1024
-DAILY_LIMIT = 2
+DAILY_LIMIT = 10
 
-# In-memory sessions: token -> username (cleared on restart)
+DATABASE_URL          = os.getenv("DATABASE_URL", "")
+GOOGLE_CLIENT_ID      = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET  = os.getenv("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_REDIRECT_URI   = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/auth/google/callback")
+FRONTEND_URL          = os.getenv("FRONTEND_URL", "http://localhost:5175")
+
+# In-memory sessions (token → username). Cleared on restart — acceptable.
 active_sessions: dict[str, str] = {}
-
-# Google OAuth config
-GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID", "")
-GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
-GOOGLE_REDIRECT_URI  = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/auth/google/callback")
-FRONTEND_URL         = os.getenv("FRONTEND_URL", "http://localhost:5173")
-
-_google_states: dict[str, bool] = {}  # state -> True (pending)
+_google_states:  dict[str, bool] = {}
 
 
-# ── User management ───────────────────────────────────────────────────────────
+# ── Database ───────────────────────────────────────────────────────────────────
 
-def load_users() -> dict:
-    if USERS_FILE.exists():
-        with open(USERS_FILE) as f:
-            return json.load(f)
-    return {}
+@contextmanager
+def get_db():
+    conn = psycopg2.connect(DATABASE_URL)
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
-def save_users(users: dict):
-    with open(USERS_FILE, "w") as f:
-        json.dump(users, f, indent=2)
+def init_db():
+    """Create tables if they don't exist."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                username        TEXT PRIMARY KEY,
+                password_hash   TEXT,
+                salt            TEXT,
+                email           TEXT,
+                display_name    TEXT,
+                auth            TEXT DEFAULT 'email',
+                created_at      TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS daily_usage (
+                username TEXT NOT NULL,
+                date     TEXT NOT NULL,
+                count    INTEGER DEFAULT 0,
+                PRIMARY KEY (username, date)
+            );
+
+            CREATE TABLE IF NOT EXISTS history (
+                id           TEXT PRIMARY KEY,
+                username     TEXT NOT NULL,
+                type         TEXT NOT NULL,
+                filename     TEXT,
+                name         TEXT,
+                notes        TEXT,
+                key_concepts TEXT,
+                flashcards   JSONB,
+                created_at   TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS feedback (
+                id         TEXT PRIMARY KEY,
+                username   TEXT NOT NULL,
+                options    JSONB,
+                message    TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+        """)
+    logging.info("Database tables ready.")
+
+
+# ── User management ────────────────────────────────────────────────────────────
+
+def user_exists(username: str) -> bool:
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM users WHERE username = %s", (username,))
+        return cur.fetchone() is not None
+
+
+def get_user(username: str) -> dict | None:
+    with get_db() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        cur.execute("SELECT * FROM users WHERE username = %s", (username,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def create_user(username: str, password_hash: str | None, salt: str | None,
+                email: str = "", display_name: str = "", auth: str = "email"):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO users (username, password_hash, salt, email, display_name, auth)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (username) DO NOTHING
+        """, (username, password_hash, salt, email, display_name, auth))
 
 
 def hash_password(password: str, salt: str = None):
@@ -92,7 +160,7 @@ def verify_password(password: str, stored_hash: str, salt: str) -> bool:
     return pw_hash == stored_hash
 
 
-# ── Session management ────────────────────────────────────────────────────────
+# ── Session management ─────────────────────────────────────────────────────────
 
 def create_session(username: str) -> str:
     token = secrets.token_hex(32)
@@ -104,51 +172,67 @@ def validate_token(token: str) -> str | None:
     return active_sessions.get(token)
 
 
-# ── Daily usage tracking ──────────────────────────────────────────────────────
+# ── Daily usage ────────────────────────────────────────────────────────────────
 
 def get_daily_usage(username: str) -> int:
     today = datetime.now().strftime("%Y-%m-%d")
-    if not USAGE_FILE.exists():
-        return 0
-    with open(USAGE_FILE) as f:
-        usage = json.load(f)
-    return usage.get(username, {}).get(today, 0)
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT count FROM daily_usage WHERE username = %s AND date = %s", (username, today))
+        row = cur.fetchone()
+        return row[0] if row else 0
 
 
 def increment_daily_usage(username: str) -> int:
     today = datetime.now().strftime("%Y-%m-%d")
-    usage = {}
-    if USAGE_FILE.exists():
-        with open(USAGE_FILE) as f:
-            usage = json.load(f)
-    usage.setdefault(username, {})[today] = usage.get(username, {}).get(today, 0) + 1
-    with open(USAGE_FILE, "w") as f:
-        json.dump(usage, f, indent=2)
-    return usage[username][today]
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO daily_usage (username, date, count) VALUES (%s, %s, 1)
+            ON CONFLICT (username, date) DO UPDATE SET count = daily_usage.count + 1
+            RETURNING count
+        """, (username, today))
+        return cur.fetchone()[0]
 
 
-# ── History ───────────────────────────────────────────────────────────────────
+# ── History ────────────────────────────────────────────────────────────────────
 
 def save_to_history(username: str, entry: dict):
-    history_file = HISTORY_DIR / f"{username}.json"
-    history = []
-    if history_file.exists():
-        with open(history_file) as f:
-            history = json.load(f)
-    history.insert(0, entry)
-    with open(history_file, "w") as f:
-        json.dump(history[:50], f, indent=2)
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO history (id, username, type, filename, name, notes, key_concepts, flashcards, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            entry["id"], username, entry["type"],
+            entry.get("filename"), entry.get("name"),
+            entry.get("notes"), entry.get("key_concepts"),
+            json.dumps(entry["flashcards"]) if entry.get("flashcards") else None,
+            entry.get("created_at", datetime.now().isoformat()),
+        ))
 
 
 def get_history(username: str) -> list:
-    history_file = HISTORY_DIR / f"{username}.json"
-    if history_file.exists():
-        with open(history_file) as f:
-            return json.load(f)
-    return []
+    with get_db() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        cur.execute("""
+            SELECT id, type, filename, name, notes, key_concepts, flashcards,
+                   created_at AT TIME ZONE 'UTC' AS created_at
+            FROM history WHERE username = %s
+            ORDER BY created_at DESC LIMIT 50
+        """, (username,))
+        rows = cur.fetchall()
+        result = []
+        for row in rows:
+            d = dict(row)
+            d["created_at"] = d["created_at"].isoformat() if d["created_at"] else ""
+            if d["flashcards"] is None:
+                d["flashcards"] = None
+            result.append(d)
+        return result
 
 
-# ── Anthropic ─────────────────────────────────────────────────────────────────
+# ── Anthropic ──────────────────────────────────────────────────────────────────
 
 def get_anthropic_client() -> anthropic.Anthropic:
     api_key = os.getenv("ANTHROPIC_API_KEY")
@@ -157,7 +241,7 @@ def get_anthropic_client() -> anthropic.Anthropic:
     return anthropic.Anthropic(api_key=api_key)
 
 
-# ── Content processing ────────────────────────────────────────────────────────
+# ── File processing ────────────────────────────────────────────────────────────
 
 def extract_text_from_pdf(file_path: str) -> str:
     text = ""
@@ -183,14 +267,14 @@ def extract_content_from_image(client, image_data: str, media_type: str) -> str:
 
 
 def generate_notes(client, content: str) -> dict:
-    """Single API call — notes + key concepts together (optimised from 2 calls to 1)."""
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=3000,
         temperature=0.7,
         system="""You are an expert educator creating student study notes.
-Write comprehensive markdown notes: concept explanations, examples, formulas, definitions, diagrams where useful.
-Adapt to the subject (sciences, engineering, humanities, languages, etc.) based on the input.
+Write comprehensive markdown notes: concept explanations, examples, formulas, definitions.
+Use LaTeX math notation: inline with $...$ and display with $$...$$
+Adapt to the subject (sciences, engineering, humanities, languages) based on the input.
 
 End your response with EXACTLY this section (no extra text after):
 ## KEY_CONCEPTS_LIST
@@ -199,7 +283,6 @@ End your response with EXACTLY this section (no extra text after):
 (5-7 bullet points, very concise)""",
         messages=[{"role": "user", "content": f"Transform into structured study notes:\n\n{content}"}]
     )
-
     full_text = response.content[0].text.strip()
     if "## KEY_CONCEPTS_LIST" in full_text:
         notes, key_concepts = full_text.split("## KEY_CONCEPTS_LIST", 1)
@@ -208,7 +291,6 @@ End your response with EXACTLY this section (no extra text after):
     else:
         notes = full_text
         key_concepts = ""
-
     return {"success": True, "notes": notes, "key_concepts": key_concepts, "study_type": "Study Notes"}
 
 
@@ -224,7 +306,6 @@ A: [answer, 1-3 sentences]
 Arrange from basic to advanced. Focus on definitions, facts, quick recall.""",
         messages=[{"role": "user", "content": f"Create 8-12 flashcards from this content:\n\n{content}\n\nFormat each as Q: ... A: ... separated by ---"}]
     )
-
     flashcards_text = response.content[0].text.strip()
     flashcards = []
     for card in flashcards_text.split("---"):
@@ -235,7 +316,6 @@ Arrange from basic to advanced. Focus on definitions, facts, quick recall.""",
                 a = parts[1].strip()
                 if q and a:
                     flashcards.append({"question": q, "answer": a})
-
     return {"success": True, "flashcards": flashcards, "count": len(flashcards)}
 
 
@@ -252,7 +332,21 @@ def process_file(client, file_extension: str, temp_file_path: Path) -> str:
     return extract_content_from_image(client, image_data, get_media_type(file_extension.lstrip(".")))
 
 
-# ── Auth routes ───────────────────────────────────────────────────────────────
+# ── Startup ────────────────────────────────────────────────────────────────────
+
+@app.on_event("startup")
+async def startup():
+    if DATABASE_URL:
+        try:
+            init_db()
+        except Exception as e:
+            logging.error(f"Database connection failed: {e}")
+            logging.warning("Server starting without database — check DATABASE_URL")
+    else:
+        logging.warning("DATABASE_URL not set — database features disabled")
+
+
+# ── Auth routes ────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 async def health_check():
@@ -261,7 +355,7 @@ async def health_check():
 
 @app.get("/api/stats")
 async def get_stats():
-    return {"version": "4.0.0"}
+    return {"version": "5.0.0"}
 
 
 @app.post("/api/register")
@@ -271,17 +365,14 @@ async def register(request: Request):
     password = data.get("password", "")
 
     if len(username) < 3:
-        raise HTTPException(400, "Username must be at least 3 characters")
+        raise HTTPException(400, "Email too short")
     if len(password) < 6:
         raise HTTPException(400, "Password must be at least 6 characters")
-
-    users = load_users()
-    if username in users:
-        raise HTTPException(400, "Username already taken")
+    if user_exists(username):
+        raise HTTPException(400, "Account already exists")
 
     pw_hash, salt = hash_password(password)
-    users[username] = {"password_hash": pw_hash, "salt": salt, "created_at": datetime.now().isoformat()}
-    save_users(users)
+    create_user(username, pw_hash, salt, email=username)
     logging.info(f"Registered: {username}")
     return {"success": True, "message": "Account created"}
 
@@ -292,10 +383,9 @@ async def login(request: Request):
     username = data.get("username", "").strip().lower()
     password = data.get("password", "")
 
-    users = load_users()
-    user = users.get(username)
-    if not user or not verify_password(password, user["password_hash"], user["salt"]):
-        raise HTTPException(401, "Invalid username or password")
+    user = get_user(username)
+    if not user or not user.get("password_hash") or not verify_password(password, user["password_hash"], user["salt"]):
+        raise HTTPException(401, "Invalid email or password")
 
     token = create_session(username)
     logging.info(f"Login: {username}")
@@ -344,24 +434,13 @@ async def submit_feedback(request: Request):
     options = data.get("options", [])
     message = data.get("message", "")
 
-    entry = {
-        "id": str(uuid.uuid4()),
-        "username": username,
-        "options": options,
-        "message": message,
-        "created_at": datetime.now().isoformat(),
-    }
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO feedback (id, username, options, message) VALUES (%s, %s, %s, %s)",
+            (str(uuid.uuid4()), username, json.dumps(options), message)
+        )
 
-    feedback_file = DATA_DIR / "feedback.json"
-    feedback = []
-    if feedback_file.exists():
-        with open(feedback_file) as f:
-            feedback = json.load(f)
-    feedback.insert(0, entry)
-    with open(feedback_file, "w") as f:
-        json.dump(feedback, f, indent=2)
-
-    # Send email if SMTP is configured
     smtp_user = os.getenv("SMTP_USER", "")
     smtp_pass = os.getenv("SMTP_PASSWORD", "")
     notify_email = os.getenv("NOTIFY_EMAIL", "frakz321@gmail.com")
@@ -388,7 +467,7 @@ async def submit_feedback(request: Request):
 @app.get("/auth/google")
 async def google_login():
     if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET):
-        raise HTTPException(400, "Google OAuth not configured — add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to .env")
+        raise HTTPException(400, "Google OAuth not configured")
     state = secrets.token_hex(16)
     _google_states[state] = True
     params = urlencode({
@@ -413,17 +492,13 @@ async def google_callback(code: str = None, state: str = None, error: str = None
 
     async with httpx.AsyncClient() as client:
         token_resp = await client.post("https://oauth2.googleapis.com/token", data={
-            "code": code,
-            "client_id": GOOGLE_CLIENT_ID,
+            "code": code, "client_id": GOOGLE_CLIENT_ID,
             "client_secret": GOOGLE_CLIENT_SECRET,
-            "redirect_uri": GOOGLE_REDIRECT_URI,
-            "grant_type": "authorization_code",
+            "redirect_uri": GOOGLE_REDIRECT_URI, "grant_type": "authorization_code",
         })
         token_data = token_resp.json()
         if "error" in token_data:
-            logging.error(f"Google token exchange error: {token_data}")
             return RedirectResponse(f"{FRONTEND_URL}/?auth_error=token_exchange_failed")
-
         profile_resp = await client.get(
             "https://www.googleapis.com/oauth2/v3/userinfo",
             headers={"Authorization": f"Bearer {token_data['access_token']}"}
@@ -435,16 +510,9 @@ async def google_callback(code: str = None, state: str = None, error: str = None
         return RedirectResponse(f"{FRONTEND_URL}/?auth_error=no_email")
 
     username = "g_" + email.split("@")[0].lower().replace(".", "_").replace("+", "_")[:24]
-
-    users = load_users()
-    if username not in users:
-        users[username] = {
-            "password_hash": None, "salt": None,
-            "created_at": datetime.now().isoformat(),
-            "email": email, "display_name": profile.get("name", ""),
-            "auth": "google",
-        }
-        save_users(users)
+    if not user_exists(username):
+        create_user(username, None, None,
+                    email=email, display_name=profile.get("name", ""), auth="google")
         logging.info(f"Google OAuth new user: {username} ({email})")
 
     token = create_session(username)
@@ -453,36 +521,23 @@ async def google_callback(code: str = None, state: str = None, error: str = None
 
 
 @app.post("/api/rename-history")
-async def rename_history(request: Request):
+async def rename_history_entry(request: Request):
     data = await request.json()
     username = validate_token(data.get("token", ""))
     if not username:
         raise HTTPException(401, "Invalid session")
-
     entry_id = data.get("entry_id", "")
     name = data.get("name", "").strip()
-
-    history_file = HISTORY_DIR / f"{username}.json"
-    if not history_file.exists():
-        raise HTTPException(404, "No history found")
-
-    with open(history_file) as f:
-        history = json.load(f)
-
-    for entry in history:
-        if entry["id"] == entry_id:
-            entry["name"] = name
-            break
-    else:
-        raise HTTPException(404, "Entry not found")
-
-    with open(history_file, "w") as f:
-        json.dump(history, f, indent=2)
-
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("UPDATE history SET name = %s WHERE id = %s AND username = %s",
+                    (name, entry_id, username))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Entry not found")
     return {"success": True}
 
 
-# ── Processing routes ─────────────────────────────────────────────────────────
+# ── Processing routes ──────────────────────────────────────────────────────────
 
 def validate_upload(file_extension: str, contents: bytes):
     if file_extension not in ALLOWED_EXTENSIONS:
@@ -499,7 +554,7 @@ async def generate_notes_endpoint(file: UploadFile = File(...), token: str = For
     if not username:
         raise HTTPException(401, "Please login first")
     if get_daily_usage(username) >= DAILY_LIMIT:
-        raise HTTPException(429, f"Daily limit of {DAILY_LIMIT} images reached. Try again tomorrow.")
+        raise HTTPException(429, f"Daily limit of {DAILY_LIMIT} reached. Try again tomorrow.")
 
     try:
         file_extension = Path(file.filename).suffix.lower()
@@ -528,7 +583,6 @@ async def generate_notes_endpoint(file: UploadFile = File(...), token: str = For
             })
             logging.info(f"Notes: {username} / {file.filename}")
             return result
-
         finally:
             temp_path.unlink(missing_ok=True)
 
@@ -545,7 +599,7 @@ async def generate_competitive_flashcards_endpoint(file: UploadFile = File(...),
     if not username:
         raise HTTPException(401, "Please login first")
     if get_daily_usage(username) >= DAILY_LIMIT:
-        raise HTTPException(429, f"Daily limit of {DAILY_LIMIT} images reached. Try again tomorrow.")
+        raise HTTPException(429, f"Daily limit of {DAILY_LIMIT} reached. Try again tomorrow.")
 
     try:
         file_extension = Path(file.filename).suffix.lower()
@@ -574,17 +628,16 @@ async def generate_competitive_flashcards_endpoint(file: UploadFile = File(...),
             })
             logging.info(f"Flashcards: {username} / {file.filename}")
             return result
-
         finally:
             temp_path.unlink(missing_ok=True)
 
     except HTTPException:
         raise
     except Exception as e:
-        logging.exception(f"Error in generate-competitive-flashcards for {username}")
+        logging.exception(f"Error in generate-flashcards for {username}")
         return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
