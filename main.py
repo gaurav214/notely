@@ -495,10 +495,23 @@ async def update_email(request: Request):
     new_email = data.get("email", "").strip().lower()
     if not new_email or "@" not in new_email:
         raise HTTPException(400, "Valid email required")
+    if new_email == username:
+        return {"success": True}  # no change
+    if user_exists(new_email):
+        raise HTTPException(400, "An account with this email already exists")
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute("UPDATE users SET email=%s WHERE username=%s", (new_email, username))
-    return {"success": True}
+        # Update username (login credential), email field, and migrate all user data
+        cur.execute("UPDATE history SET username=%s WHERE username=%s", (new_email, username))
+        cur.execute("UPDATE daily_usage SET username=%s WHERE username=%s", (new_email, username))
+        cur.execute("UPDATE feedback SET username=%s WHERE username=%s", (new_email, username))
+        cur.execute("UPDATE users SET username=%s, email=%s WHERE username=%s", (new_email, new_email, username))
+    # Update session to use new username
+    for token, u in list(active_sessions.items()):
+        if u == username:
+            active_sessions[token] = new_email
+    logging.info(f"Email changed: {username} → {new_email}")
+    return {"success": True, "new_username": new_email}
 
 
 @app.delete("/api/delete-account")

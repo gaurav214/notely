@@ -1394,8 +1394,11 @@ function AccountPage({ user, onNavigate, toast, onUpdateUser }) {
         onUpdateUser({ display_name: displayName_ });
       }
       if (email !== user.username) {
-        await api.post('/api/update-email', { token: user.token, email });
-        onUpdateUser({ username: email });
+        const res = await api.post('/api/update-email', { token: user.token, email });
+        if (res.new_username) {
+          localStorage.setItem('bn_username', res.new_username);
+          onUpdateUser({ username: res.new_username });
+        }
       }
       toast.show('Profile updated', 'success');
     } catch (e) { toast.show(e.message, 'error'); }
