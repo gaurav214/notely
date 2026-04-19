@@ -687,6 +687,8 @@ async def update_display_name(request: Request):
 
 # ── Processing routes ──────────────────────────────────────────────────────────
 
+MAX_PDF_PAGES = 20
+
 def validate_upload(file_extension: str, contents: bytes):
     if file_extension not in ALLOWED_EXTENSIONS:
         raise HTTPException(400, "Invalid file type")
@@ -694,6 +696,17 @@ def validate_upload(file_extension: str, contents: bytes):
         raise HTTPException(413, "File too large (max 25MB)")
     if len(contents) == 0:
         raise HTTPException(400, "Empty file")
+    if file_extension == ".pdf":
+        import io
+        try:
+            reader = PyPDF2.PdfReader(io.BytesIO(contents))
+            pages = len(reader.pages)
+            if pages > MAX_PDF_PAGES:
+                raise HTTPException(400, f"PDF has {pages} pages — max is {MAX_PDF_PAGES}. Split it into smaller sections and upload each part separately.")
+        except HTTPException:
+            raise
+        except Exception:
+            pass  # let it proceed if page count check fails
 
 
 @app.post("/api/generate-notes")
