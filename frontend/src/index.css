@@ -1754,3 +1754,76 @@ kbd {
   .mockup-card-back { width: 180px; left: 100px; }
   .landing-h2 { font-size: 26px; }
 }
+
+/* ── Spaced Repetition ──────────────────────────────────────────────────────── */
+
+.due-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 18px;
+  background: color-mix(in srgb, var(--c-accent) 8%, var(--c-surface-1));
+  border: 1px solid color-mix(in srgb, var(--c-accent) 30%, transparent);
+  border-radius: var(--r-md);
+}
+.due-banner-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--c-accent);
+}
+.due-banner-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--c-text-1);
+  margin-bottom: 2px;
+}
+.due-banner-sub {
+  font-size: 12px;
+  color: var(--c-text-3);
+}
+
+.sr-meta { display: flex; gap: 6px; align-items: center; }
+.sr-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 99px;
+  letter-spacing: 0.02em;
+}
+.sr-badge.due { background: color-mix(in srgb, var(--c-warning) 15%, transparent); color: var(--c-warning); }
+.sr-badge.new { background: color-mix(in srgb, var(--c-accent) 15%, transparent); color: var(--c-accent); }
+
+.sr-new-label {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: color-mix(in srgb, var(--c-accent) 15%, transparent);
+  color: var(--c-accent);
+  padding: 2px 8px;
+  border-radius: 99px;
+}
+
+.sr-rating { gap: 10px; }
+.sr-rating .btn {
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px 10px;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: var(--r-md);
+}
+.sr-interval { font-size: 11px; font-weight: 400; opacity: 0.75; }
+
+.sr-btn-again { background: color-mix(in srgb, var(--c-error) 12%, var(--c-surface-1)); color: var(--c-error); border: 1px solid color-mix(in srgb, var(--c-error) 30%, transparent); }
+.sr-btn-again:hover { background: color-mix(in srgb, var(--c-error) 20%, var(--c-surface-1)); }
+.sr-btn-good  { background: color-mix(in srgb, var(--c-accent) 12%, var(--c-surface-1)); color: var(--c-accent); border: 1px solid color-mix(in srgb, var(--c-accent) 30%, transparent); }
+.sr-btn-good:hover { background: color-mix(in srgb, var(--c-accent) 20%, var(--c-surface-1)); }
+.sr-btn-easy  { background: color-mix(in srgb, var(--c-success) 12%, var(--c-surface-1)); color: var(--c-success); border: 1px solid color-mix(in srgb, var(--c-success) 30%, transparent); }
+.sr-btn-easy:hover { background: color-mix(in srgb, var(--c-success) 20%, var(--c-surface-1)); }

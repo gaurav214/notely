@@ -118,6 +118,18 @@ def init_db():
                 message    TEXT,
                 created_at TIMESTAMPTZ DEFAULT NOW()
             );
+
+            CREATE TABLE IF NOT EXISTS card_reviews (
+                id           TEXT PRIMARY KEY,
+                username     TEXT NOT NULL,
+                history_id   TEXT NOT NULL,
+                card_index   INTEGER NOT NULL,
+                interval     INTEGER DEFAULT 1,
+                ease_factor  REAL DEFAULT 2.5,
+                repetitions  INTEGER DEFAULT 0,
+                next_review  TEXT NOT NULL,
+                UNIQUE(username, history_id, card_index)
+            );
         """)
     logging.info("Database tables ready.")
 
@@ -326,6 +338,25 @@ def get_media_type(extension: str) -> str:
             "bmp": "image/bmp", "gif": "image/gif"}.get(extension, "image/jpeg")
 
 
+# ── Spaced Repetition (SM-2) ───────────────────────────────────────────────────
+
+def sm2(repetitions: int, ease_factor: float, interval: int, quality: int) -> tuple:
+    """SM-2 algorithm. quality: 1=Again, 4=Good, 5=Easy"""
+    if quality < 3:
+        new_reps = 0
+        new_interval = 1
+    else:
+        if repetitions == 0:
+            new_interval = 1
+        elif repetitions == 1:
+            new_interval = 6
+        else:
+            new_interval = round(interval * ease_factor)
+        new_reps = repetitions + 1
+    new_ef = max(1.3, ease_factor + 0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
+    return new_reps, new_ef, new_interval
+
+
 def process_file(client, file_extension: str, temp_file_path: Path) -> str:
     if file_extension == ".pdf":
         return extract_text_from_pdf(str(temp_file_path))
@@ -502,6 +533,7 @@ async def update_email(request: Request):
     with get_db() as conn:
         cur = conn.cursor()
         # Update username (login credential), email field, and migrate all user data
+        cur.execute("UPDATE card_reviews SET username=%s WHERE username=%s", (new_email, username))
         cur.execute("UPDATE history SET username=%s WHERE username=%s", (new_email, username))
         cur.execute("UPDATE daily_usage SET username=%s WHERE username=%s", (new_email, username))
         cur.execute("UPDATE feedback SET username=%s WHERE username=%s", (new_email, username))
@@ -526,6 +558,7 @@ async def delete_account(request: Request):
         raise HTTPException(400, "Incorrect password")
     with get_db() as conn:
         cur = conn.cursor()
+        cur.execute("DELETE FROM card_reviews WHERE username=%s", (username,))
         cur.execute("DELETE FROM history WHERE username=%s", (username,))
         cur.execute("DELETE FROM daily_usage WHERE username=%s", (username,))
         cur.execute("DELETE FROM feedback WHERE username=%s", (username,))
@@ -683,6 +716,103 @@ async def update_display_name(request: Request):
         cur = conn.cursor()
         cur.execute("UPDATE users SET display_name = %s WHERE username = %s", (name, username))
     return {"success": True, "display_name": name}
+
+
+# ── Spaced repetition routes ───────────────────────────────────────────────────
+
+@app.get("/api/due-cards-count")
+async def due_cards_count(token: str):
+    username = validate_token(token)
+    if not username:
+        raise HTTPException(401, "Invalid session")
+    today = datetime.now().strftime("%Y-%m-%d")
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*) FROM card_reviews WHERE username = %s AND next_review <= %s",
+            (username, today)
+        )
+        count = cur.fetchone()[0]
+    return {"due": count}
+
+
+@app.get("/api/study-session")
+async def study_session(token: str, history_id: str):
+    username = validate_token(token)
+    if not username:
+        raise HTTPException(401, "Invalid session")
+    today = datetime.now().strftime("%Y-%m-%d")
+    with get_db() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        cur.execute("SELECT flashcards FROM history WHERE id = %s AND username = %s",
+                    (history_id, username))
+        row = cur.fetchone()
+        if not row or not row["flashcards"]:
+            raise HTTPException(404, "Deck not found or has no flashcards")
+        flashcards = row["flashcards"]
+        cur.execute("""
+            SELECT card_index, interval, ease_factor, repetitions, next_review
+            FROM card_reviews WHERE username = %s AND history_id = %s
+        """, (username, history_id))
+        reviews = {r["card_index"]: dict(r) for r in cur.fetchall()}
+
+    session_cards = []
+    for i, card in enumerate(flashcards):
+        review = reviews.get(i)
+        if review is None:
+            session_cards.append({
+                "card_index": i, "question": card["question"], "answer": card["answer"],
+                "is_new": True, "interval": 0, "ease_factor": 2.5, "repetitions": 0,
+            })
+        elif review["next_review"] <= today:
+            session_cards.append({
+                "card_index": i, "question": card["question"], "answer": card["answer"],
+                "is_new": False, "interval": review["interval"],
+                "ease_factor": review["ease_factor"], "repetitions": review["repetitions"],
+            })
+
+    new_count = sum(1 for c in session_cards if c["is_new"])
+    due_count = sum(1 for c in session_cards if not c["is_new"])
+    return {"cards": session_cards, "total": len(flashcards), "due": due_count, "new_count": new_count}
+
+
+@app.post("/api/review-card")
+async def review_card(request: Request):
+    from datetime import timedelta
+    data = await request.json()
+    username = validate_token(data.get("token", ""))
+    if not username:
+        raise HTTPException(401, "Invalid session")
+    history_id = data.get("history_id", "")
+    card_index = data.get("card_index")
+    quality = data.get("quality", 1)  # 1=Again, 4=Good, 5=Easy
+    if card_index is None:
+        raise HTTPException(400, "card_index required")
+
+    with get_db() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        cur.execute("""
+            SELECT interval, ease_factor, repetitions FROM card_reviews
+            WHERE username = %s AND history_id = %s AND card_index = %s
+        """, (username, history_id, card_index))
+        existing = cur.fetchone()
+        if existing:
+            interval, ease_factor, repetitions = existing["interval"], existing["ease_factor"], existing["repetitions"]
+        else:
+            interval, ease_factor, repetitions = 0, 2.5, 0
+
+        new_reps, new_ef, new_interval = sm2(repetitions, ease_factor, interval, quality)
+        next_review = (datetime.now() + timedelta(days=new_interval)).strftime("%Y-%m-%d")
+
+        cur.execute("""
+            INSERT INTO card_reviews (id, username, history_id, card_index, interval, ease_factor, repetitions, next_review)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (username, history_id, card_index) DO UPDATE SET
+                interval = EXCLUDED.interval, ease_factor = EXCLUDED.ease_factor,
+                repetitions = EXCLUDED.repetitions, next_review = EXCLUDED.next_review
+        """, (str(uuid.uuid4()), username, history_id, card_index, new_interval, new_ef, new_reps, next_review))
+
+    return {"success": True, "next_review": next_review, "interval": new_interval}
 
 
 # ── Processing routes ──────────────────────────────────────────────────────────

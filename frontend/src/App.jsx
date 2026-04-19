@@ -98,6 +98,7 @@ const Icon = {
   CheckCircle: (p = {}) => <svg {...iconProps} {...p}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>,
   Pencil: (p = {}) => <svg {...iconProps} {...p}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>,
   Download: (p = {}) => <svg {...iconProps} {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>,
+  Brain: (p = {}) => <svg {...iconProps} {...p}><path d="M9.5 2a2.5 2.5 0 0 1 5 0"/><path d="M14.5 2A2.5 2.5 0 0 1 17 4.5v1a2.5 2.5 0 0 1-2.5 2.5H10A2.5 2.5 0 0 1 7.5 5.5v-1A2.5 2.5 0 0 1 10 2"/><path d="M7.5 5.5A4.5 4.5 0 0 0 3 10c0 2 1 3.5 2.5 4.5v2A1.5 1.5 0 0 0 7 18h10a1.5 1.5 0 0 0 1.5-1.5v-2C20 13.5 21 12 21 10a4.5 4.5 0 0 0-4.5-4.5"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="10" y1="10" x2="14" y2="10"/></svg>,
 };
 
 /* ── Utility components ──────────────────────────────────────────────────────── */
@@ -677,12 +678,13 @@ function NoteModal({ entry, onClose }) {
   );
 }
 
-function Dashboard({ user, onNavigate, onUpdateDisplayName }) {
+function Dashboard({ user, onNavigate, onUpdateDisplayName, onStudy }) {
   const [history, setHistory] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [previewEntry, setPreviewEntry] = useState(null);
   const [editingName, setEditingName] = useState(false);
   const [nameVal, setNameVal] = useState(user.display_name || displayName(user.username));
+  const [dueCount, setDueCount] = useState(0);
   const nameRef = useRef();
   const remaining = user.daily_limit - user.daily_used;
 
@@ -703,6 +705,9 @@ function Dashboard({ user, onNavigate, onUpdateDisplayName }) {
       .then(d => setHistory(d.history.slice(0, 5)))
       .catch(() => {})
       .finally(() => setLoadingHistory(false));
+    api.get(`/api/due-cards-count?token=${user.token}`)
+      .then(d => setDueCount(d.due))
+      .catch(() => {});
   }, [user.token]);
 
   const pct = (user.daily_used / user.daily_limit) * 100;
@@ -774,6 +779,23 @@ function Dashboard({ user, onNavigate, onUpdateDisplayName }) {
           )}
         </section>
 
+        {dueCount > 0 && (
+          <section className="section">
+            <div className="due-banner">
+              <div className="due-banner-left">
+                <Icon.Brain width={18} height={18} />
+                <div>
+                  <p className="due-banner-title">{dueCount} card{dueCount !== 1 ? 's' : ''} due for review</p>
+                  <p className="due-banner-sub">Open a flashcard deck in History to start your session.</p>
+                </div>
+              </div>
+              <button className="btn btn-primary btn-sm" onClick={() => onNavigate('history')}>
+                Review now
+              </button>
+            </div>
+          </section>
+        )}
+
         <section className="section">
           <div className="section-header">
             <p className="section-title">Recent</p>
@@ -790,6 +812,7 @@ function Dashboard({ user, onNavigate, onUpdateDisplayName }) {
             <div className="history-list">
               {history.map(entry => (
                 <HistoryItem key={entry.id} entry={entry} compact user={user}
+                  onStudy={onStudy}
                   onRename={(action, e) => {
                     if (action === 'open') { setPreviewEntry(e); return; }
                     setHistory(h => h.map(x => x.id === action ? { ...x, name: e } : x));
@@ -1281,8 +1304,9 @@ function downloadNotesPDF(entry) {
   win.document.close();
 }
 
-function HistoryItem({ entry, compact, expanded, onToggle, user, onRename }) {
+function HistoryItem({ entry, compact, expanded, onToggle, user, onRename, onStudy }) {
   const isNotes = entry.type === 'notes' || entry.type === 'btech_notes';
+  const isCards = entry.type === 'competitive_flashcards';
   const typeLabel = isNotes ? 'NOTES' : 'CARDS';
   const badgeClass = isNotes ? 'badge-notes' : 'badge-cards';
   const [renaming, setRenaming] = useState(false);
@@ -1319,6 +1343,11 @@ function HistoryItem({ entry, compact, expanded, onToggle, user, onRename }) {
           <span className="history-name">{entry.name || entry.filename}</span>
         )}
         <span className="history-date">{formatDate(entry.created_at)}</span>
+        {isCards && onStudy && (
+          <button className="icon-btn" title="Spaced study" onClick={e => { e.stopPropagation(); onStudy(entry); }}>
+            <Icon.Brain />
+          </button>
+        )}
         {user && (
           <button className="icon-btn" title="Rename" onClick={e => { e.stopPropagation(); setRenaming(true); }}>
             <Icon.Pencil />
@@ -1364,9 +1393,18 @@ function HistoryItem({ entry, compact, expanded, onToggle, user, onRename }) {
             </>
           )}
           {entry.type === 'competitive_flashcards' && entry.flashcards && (
-            <div className="cards-grid" style={{ marginTop: 10 }}>
-              {entry.flashcards.map((c, i) => <FlipCard key={i} index={i} question={c.question} answer={c.answer} />)}
-            </div>
+            <>
+              {onStudy && (
+                <div className="history-actions">
+                  <button className="btn btn-primary btn-sm" onClick={() => onStudy(entry)}>
+                    <Icon.Brain width={12} height={12} /> Spaced study
+                  </button>
+                </div>
+              )}
+              <div className="cards-grid" style={{ marginTop: 10 }}>
+                {entry.flashcards.map((c, i) => <FlipCard key={i} index={i} question={c.question} answer={c.answer} />)}
+              </div>
+            </>
           )}
         </div>
       )}
@@ -1596,7 +1634,156 @@ function ResetPasswordPage({ token, onDone }) {
   );
 }
 
-function HistoryPage({ user, onNavigate, toast }) {
+/* ── Spaced Study Session ────────────────────────────────────────────────────── */
+
+function SpacedStudySession({ user, entry, onExit, toast }) {
+  const [cards, setCards] = useState([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [flipped, setFlipped] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [done, setDone] = useState(false);
+  const [empty, setEmpty] = useState(false);
+  const [stats, setStats] = useState({ again: 0, good: 0, easy: 0 });
+
+  useEffect(() => {
+    api.get(`/api/study-session?token=${user.token}&history_id=${entry.id}`)
+      .then(d => {
+        setCards(d.cards);
+        if (d.cards.length === 0) setEmpty(true);
+      })
+      .catch(() => { toast.show('Failed to load session', 'error'); onExit(); })
+      .finally(() => setLoading(false));
+  }, [entry.id, user.token]);
+
+  async function handleRating(quality) {
+    const card = cards[currentIndex];
+    try {
+      await api.post('/api/review-card', {
+        token: user.token, history_id: entry.id,
+        card_index: card.card_index, quality,
+      });
+    } catch { /* non-fatal, continue */ }
+    const label = quality === 1 ? 'again' : quality === 4 ? 'good' : 'easy';
+    setStats(s => ({ ...s, [label]: s[label] + 1 }));
+    if (currentIndex + 1 >= cards.length) setDone(true);
+    else { setCurrentIndex(i => i + 1); setFlipped(false); }
+  }
+
+  if (loading) {
+    return (
+      <div className="study-mode">
+        <div className="study-complete"><Spinner size={28} /><p style={{ marginTop: 16 }}>Loading cards…</p></div>
+      </div>
+    );
+  }
+
+  if (empty) {
+    return (
+      <div className="study-mode">
+        <div className="study-complete">
+          <div className="study-complete-icon" style={{ color: 'var(--c-success)' }}><Icon.CheckCircle width={44} height={44} /></div>
+          <h2>All caught up!</h2>
+          <p className="study-complete-sub">No cards due for "{entry.name || entry.filename}"</p>
+          <p style={{ fontSize: 13, color: 'var(--c-text-3)', marginTop: 4 }}>Come back tomorrow to keep the streak going.</p>
+          <button className="btn btn-primary" style={{ marginTop: 24 }} onClick={onExit}>Back</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (done) {
+    const total = stats.again + stats.good + stats.easy;
+    return (
+      <div className="study-mode">
+        <div className="study-complete">
+          <div className="study-complete-icon"><Icon.CheckCircle width={44} height={44} /></div>
+          <h2>Session complete!</h2>
+          <p className="study-complete-sub">{total} card{total !== 1 ? 's' : ''} reviewed from "{entry.name || entry.filename}"</p>
+          <div className="study-stats">
+            <div className="study-stat">
+              <span className="study-stat-num" style={{ color: 'var(--c-success)' }}>{stats.easy}</span>
+              <span className="study-stat-label">Easy</span>
+            </div>
+            <div className="study-stat">
+              <span className="study-stat-num" style={{ color: 'var(--c-accent)' }}>{stats.good}</span>
+              <span className="study-stat-label">Good</span>
+            </div>
+            <div className="study-stat">
+              <span className="study-stat-num" style={{ color: 'var(--c-error)' }}>{stats.again}</span>
+              <span className="study-stat-label">Again</span>
+            </div>
+          </div>
+          <p style={{ fontSize: 12, color: 'var(--c-text-3)', marginTop: 8 }}>
+            Cards marked "Again" will reappear tomorrow.
+          </p>
+          <button className="btn btn-primary" style={{ marginTop: 24 }} onClick={onExit}>Done</button>
+        </div>
+      </div>
+    );
+  }
+
+  const card = cards[currentIndex];
+  const newCount = cards.filter(c => c.is_new).length;
+  const dueCount = cards.filter(c => !c.is_new).length;
+
+  return (
+    <div className="study-mode">
+      <div className="study-header">
+        <button className="btn btn-ghost" onClick={onExit}>
+          <Icon.ArrowLeft width={13} height={13} /> Exit
+        </button>
+        <div className="study-progress-wrap">
+          <div className="study-progress-bar">
+            <div className="study-progress-fill" style={{ width: `${(currentIndex / cards.length) * 100}%` }} />
+          </div>
+          <span className="study-progress-text">{currentIndex + 1} / {cards.length}</span>
+        </div>
+        <div className="sr-meta">
+          {dueCount > 0 && <span className="sr-badge due">{dueCount} due</span>}
+          {newCount > 0 && <span className="sr-badge new">{newCount} new</span>}
+        </div>
+      </div>
+
+      <div className="study-card-wrap">
+        <div className={`study-flip-card flip-card ${flipped ? 'flipped' : ''}`}
+          onClick={() => !flipped && setFlipped(true)}>
+          <div className="flip-inner">
+            <div className="flip-front study-flip-face">
+              {card.is_new && <span className="sr-new-label">New card</span>}
+              <span className="study-flip-label">Question</span>
+              <p className="study-flip-text">{card.question}</p>
+              <span className="flip-hint">Tap to reveal answer</span>
+            </div>
+            <div className="flip-back study-flip-face">
+              <span className="study-flip-label accent">Answer</span>
+              <p className="study-flip-text">{card.answer}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {flipped ? (
+        <div className="study-actions sr-rating">
+          <button className="btn sr-btn-again" onClick={() => handleRating(1)}>
+            Again<span className="sr-interval">Tomorrow</span>
+          </button>
+          <button className="btn sr-btn-good" onClick={() => handleRating(4)}>
+            Good<span className="sr-interval">{card.interval <= 1 ? '3 days' : `${Math.round(card.interval * 2.5)}d`}</span>
+          </button>
+          <button className="btn sr-btn-easy" onClick={() => handleRating(5)}>
+            Easy<span className="sr-interval">{card.interval <= 1 ? '1 week' : `${Math.round(card.interval * 3)}d`}</span>
+          </button>
+        </div>
+      ) : (
+        <div className="study-actions">
+          <button className="btn btn-primary" onClick={() => setFlipped(true)}>Show answer</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HistoryPage({ user, onNavigate, toast, onStudy }) {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(null);
@@ -1638,7 +1825,7 @@ function HistoryPage({ user, onNavigate, toast }) {
               <HistoryItem key={entry.id} entry={entry}
                 expanded={expanded === entry.id}
                 onToggle={() => setExpanded(expanded === entry.id ? null : entry.id)}
-                user={user} onRename={handleRename} />
+                user={user} onRename={handleRename} onStudy={onStudy} />
             ))}
           </div>
         )}
@@ -1654,6 +1841,7 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [resetToken, setResetToken] = useState(_initialResetToken);
+  const [studyEntry, setStudyEntry] = useState(null);
   const toast = useToast();
 
   useEffect(() => {
@@ -1722,6 +1910,11 @@ export default function App() {
     setView(v);
   }
 
+  function handleStudy(entry) {
+    setStudyEntry(entry);
+    setView('spaced-study');
+  }
+
   function handleUsageUpdate(daily_used) {
     setUser(u => u ? { ...u, daily_used } : u);
   }
@@ -1738,7 +1931,7 @@ export default function App() {
     <>
       <ToastStack toasts={toast.toasts} />
       {feedbackOpen && user && <FeedbackModal user={user} onClose={() => setFeedbackOpen(false)} toast={toast} />}
-      {view !== 'auth' && view !== 'landing' && view !== 'forgot-password' && view !== 'reset-password' && user && (
+      {view !== 'auth' && view !== 'landing' && view !== 'forgot-password' && view !== 'reset-password' && view !== 'spaced-study' && user && (
         <Header user={user} onNavigate={handleNavigate} view={view} onFeedback={() => setFeedbackOpen(true)} />
       )}
       <main className="main-content">
@@ -1746,11 +1939,15 @@ export default function App() {
         {view === 'auth' && <AuthPage onLogin={handleLogin} onBack={() => setView('landing')} onForgot={() => setView('forgot-password')} />}
         {view === 'forgot-password' && <ForgotPasswordPage onBack={() => setView('auth')} />}
         {view === 'reset-password' && <ResetPasswordPage token={resetToken} onDone={() => { setResetToken(null); setView('auth'); }} />}
-        {view === 'dashboard' && user && <Dashboard user={user} onNavigate={handleNavigate} onUpdateDisplayName={name => setUser(u => ({ ...u, display_name: name }))} />}
+        {view === 'dashboard' && user && <Dashboard user={user} onNavigate={handleNavigate} onStudy={handleStudy} onUpdateDisplayName={name => setUser(u => ({ ...u, display_name: name }))} />}
         {view === 'notes' && user && <NotesPage user={user} onNavigate={handleNavigate} onUsageUpdate={handleUsageUpdate} toast={toast} />}
         {view === 'flashcards' && user && <FlashcardsPage user={user} onNavigate={handleNavigate} onUsageUpdate={handleUsageUpdate} toast={toast} />}
-        {view === 'history' && user && <HistoryPage user={user} onNavigate={handleNavigate} toast={toast} />}
+        {view === 'history' && user && <HistoryPage user={user} onNavigate={handleNavigate} toast={toast} onStudy={handleStudy} />}
         {view === 'account' && user && <AccountPage user={user} onNavigate={handleNavigate} toast={toast} onUpdateUser={updates => setUser(u => ({ ...u, ...updates }))} />}
+        {view === 'spaced-study' && user && studyEntry && (
+          <SpacedStudySession user={user} entry={studyEntry} toast={toast}
+            onExit={() => { setStudyEntry(null); setView('history'); }} />
+        )}
       </main>
     </>
   );
