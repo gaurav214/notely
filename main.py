@@ -130,6 +130,21 @@ def init_db():
                 next_review  TEXT NOT NULL,
                 UNIQUE(username, history_id, card_index)
             );
+
+            CREATE TABLE IF NOT EXISTS folders (
+                id         TEXT PRIMARY KEY,
+                username   TEXT NOT NULL,
+                name       TEXT NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS folder_items (
+                folder_id  TEXT NOT NULL,
+                history_id TEXT NOT NULL,
+                username   TEXT NOT NULL,
+                added_at   TIMESTAMPTZ DEFAULT NOW(),
+                PRIMARY KEY (folder_id, history_id)
+            );
         """)
     logging.info("Database tables ready.")
 
@@ -533,6 +548,8 @@ async def update_email(request: Request):
     with get_db() as conn:
         cur = conn.cursor()
         # Update username (login credential), email field, and migrate all user data
+        cur.execute("UPDATE folder_items SET username=%s WHERE username=%s", (new_email, username))
+        cur.execute("UPDATE folders SET username=%s WHERE username=%s", (new_email, username))
         cur.execute("UPDATE card_reviews SET username=%s WHERE username=%s", (new_email, username))
         cur.execute("UPDATE history SET username=%s WHERE username=%s", (new_email, username))
         cur.execute("UPDATE daily_usage SET username=%s WHERE username=%s", (new_email, username))
@@ -558,6 +575,8 @@ async def delete_account(request: Request):
         raise HTTPException(400, "Incorrect password")
     with get_db() as conn:
         cur = conn.cursor()
+        cur.execute("DELETE FROM folder_items WHERE username=%s", (username,))
+        cur.execute("DELETE FROM folders WHERE username=%s", (username,))
         cur.execute("DELETE FROM card_reviews WHERE username=%s", (username,))
         cur.execute("DELETE FROM history WHERE username=%s", (username,))
         cur.execute("DELETE FROM daily_usage WHERE username=%s", (username,))
@@ -716,6 +735,264 @@ async def update_display_name(request: Request):
         cur = conn.cursor()
         cur.execute("UPDATE users SET display_name = %s WHERE username = %s", (name, username))
     return {"success": True, "display_name": name}
+
+
+# ── Folder routes ─────────────────────────────────────────────────────────────
+
+@app.post("/api/folders")
+async def create_folder(request: Request):
+    data = await request.json()
+    username = validate_token(data.get("token", ""))
+    if not username:
+        raise HTTPException(401, "Invalid session")
+    name = data.get("name", "").strip()
+    if not name:
+        raise HTTPException(400, "Folder name required")
+    folder_id = str(uuid.uuid4())
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("INSERT INTO folders (id, username, name) VALUES (%s, %s, %s)",
+                    (folder_id, username, name))
+    return {"success": True, "id": folder_id, "name": name}
+
+
+@app.get("/api/folders")
+async def list_folders(token: str):
+    username = validate_token(token)
+    if not username:
+        raise HTTPException(401, "Invalid session")
+    with get_db() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        cur.execute("""
+            SELECT f.id, f.name, f.created_at AT TIME ZONE 'UTC' AS created_at,
+                   COUNT(fi.history_id) AS item_count
+            FROM folders f
+            LEFT JOIN folder_items fi ON fi.folder_id = f.id
+            WHERE f.username = %s
+            GROUP BY f.id, f.name, f.created_at
+            ORDER BY f.created_at DESC
+        """, (username,))
+        rows = cur.fetchall()
+        folders = []
+        for row in rows:
+            d = dict(row)
+            d["created_at"] = d["created_at"].isoformat() if d["created_at"] else ""
+            folders.append(d)
+    return {"folders": folders}
+
+
+@app.patch("/api/folders/{folder_id}")
+async def rename_folder(folder_id: str, request: Request):
+    data = await request.json()
+    username = validate_token(data.get("token", ""))
+    if not username:
+        raise HTTPException(401, "Invalid session")
+    name = data.get("name", "").strip()
+    if not name:
+        raise HTTPException(400, "Folder name required")
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("UPDATE folders SET name = %s WHERE id = %s AND username = %s",
+                    (name, folder_id, username))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Folder not found")
+    return {"success": True, "name": name}
+
+
+@app.delete("/api/folders/{folder_id}")
+async def delete_folder(folder_id: str, request: Request):
+    data = await request.json()
+    username = validate_token(data.get("token", ""))
+    if not username:
+        raise HTTPException(401, "Invalid session")
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM folder_items WHERE folder_id = %s AND username = %s",
+                    (folder_id, username))
+        cur.execute("DELETE FROM folders WHERE id = %s AND username = %s",
+                    (folder_id, username))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Folder not found")
+    return {"success": True}
+
+
+@app.get("/api/folders/{folder_id}/items")
+async def get_folder_items(folder_id: str, token: str):
+    username = validate_token(token)
+    if not username:
+        raise HTTPException(401, "Invalid session")
+    with get_db() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        cur.execute("SELECT name FROM folders WHERE id = %s AND username = %s",
+                    (folder_id, username))
+        folder = cur.fetchone()
+        if not folder:
+            raise HTTPException(404, "Folder not found")
+        cur.execute("""
+            SELECT h.id, h.type, h.filename, h.name, h.notes, h.key_concepts,
+                   h.flashcards, h.created_at AT TIME ZONE 'UTC' AS created_at
+            FROM history h
+            JOIN folder_items fi ON fi.history_id = h.id
+            WHERE fi.folder_id = %s AND fi.username = %s
+            ORDER BY fi.added_at ASC
+        """, (folder_id, username))
+        rows = cur.fetchall()
+        items = []
+        for row in rows:
+            d = dict(row)
+            d["created_at"] = d["created_at"].isoformat() if d["created_at"] else ""
+            items.append(d)
+    return {"folder_name": folder["name"], "items": items}
+
+
+@app.post("/api/folders/{folder_id}/items")
+async def add_folder_items(folder_id: str, request: Request):
+    data = await request.json()
+    username = validate_token(data.get("token", ""))
+    if not username:
+        raise HTTPException(401, "Invalid session")
+    history_ids = data.get("history_ids", [])
+    if not history_ids:
+        raise HTTPException(400, "No items specified")
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM folders WHERE id = %s AND username = %s",
+                    (folder_id, username))
+        if not cur.fetchone():
+            raise HTTPException(404, "Folder not found")
+        for hid in history_ids:
+            cur.execute("""
+                INSERT INTO folder_items (folder_id, history_id, username)
+                VALUES (%s, %s, %s) ON CONFLICT DO NOTHING
+            """, (folder_id, hid, username))
+    return {"success": True}
+
+
+@app.delete("/api/folders/{folder_id}/items/{history_id}")
+async def remove_folder_item(folder_id: str, history_id: str, request: Request):
+    data = await request.json()
+    username = validate_token(data.get("token", ""))
+    if not username:
+        raise HTTPException(401, "Invalid session")
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM folder_items WHERE folder_id=%s AND history_id=%s AND username=%s",
+                    (folder_id, history_id, username))
+    return {"success": True}
+
+
+@app.post("/api/folders/{folder_id}/generate")
+async def generate_folder_summary(folder_id: str, request: Request):
+    data = await request.json()
+    username = validate_token(data.get("token", ""))
+    if not username:
+        raise HTTPException(401, "Invalid session")
+    if get_daily_usage(username) >= DAILY_LIMIT:
+        raise HTTPException(429, f"Daily limit of {DAILY_LIMIT} reached. Try again tomorrow.")
+
+    with get_db() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        cur.execute("SELECT name FROM folders WHERE id = %s AND username = %s",
+                    (folder_id, username))
+        folder = cur.fetchone()
+        if not folder:
+            raise HTTPException(404, "Folder not found")
+        folder_name = folder["name"]
+
+        cur.execute("""
+            SELECT h.type, h.name, h.notes, h.key_concepts, h.flashcards
+            FROM history h
+            JOIN folder_items fi ON fi.history_id = h.id
+            WHERE fi.folder_id = %s AND fi.username = %s
+            ORDER BY fi.added_at ASC
+        """, (folder_id, username))
+        items = [dict(r) for r in cur.fetchall()]
+
+    if not items:
+        raise HTTPException(400, "Folder has no items to generate from")
+
+    # Build combined content from all items in the folder
+    combined_parts = []
+    for item in items:
+        label = item.get("name") or "Untitled"
+        if item.get("notes"):
+            combined_parts.append(f"=== {label} ===\n{item['notes']}")
+        if item.get("flashcards"):
+            cards = item["flashcards"]
+            if isinstance(cards, list):
+                qa = "\n".join(f"Q: {c['question']}\nA: {c['answer']}" for c in cards)
+                combined_parts.append(f"=== {label} (flashcards) ===\n{qa}")
+
+    if not combined_parts:
+        raise HTTPException(400, "Folder items have no extractable content")
+
+    combined_text = "\n\n".join(combined_parts)
+
+    client = get_anthropic_client()
+
+    # Generate combined summary
+    notes_resp = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=3500,
+        temperature=0.7,
+        system="""You are an expert educator. Multiple sets of study notes or flashcards have been combined into one topic folder.
+Synthesize all the material into ONE comprehensive, unified study guide in markdown.
+Remove duplicates, link related concepts, and add a short introduction.
+Use LaTeX math notation: inline with $...$ and display with $$...$$
+End with EXACTLY:
+## KEY_CONCEPTS_LIST
+- concept 1
+(5-8 bullet points)""",
+        messages=[{"role": "user", "content": f"Folder: {folder_name}\n\n{combined_text}"}]
+    )
+    full_text = notes_resp.content[0].text.strip()
+    if "## KEY_CONCEPTS_LIST" in full_text:
+        notes_md, key_concepts = full_text.split("## KEY_CONCEPTS_LIST", 1)
+        notes_md = notes_md.strip()
+        key_concepts = key_concepts.strip()
+    else:
+        notes_md, key_concepts = full_text, ""
+
+    # Generate master flashcard deck
+    cards_resp = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=2500,
+        temperature=0.5,
+        system="""You are an exam preparation specialist. From combined study material, create a master flashcard deck.
+Format each as:
+Q: [question]
+A: [answer]
+---
+Cover all key concepts. Aim for 10-15 cards. No duplicates.""",
+        messages=[{"role": "user", "content": f"Create master flashcards from:\n\n{combined_text}"}]
+    )
+    flashcards = []
+    for card in cards_resp.content[0].text.strip().split("---"):
+        if "Q:" in card and "A:" in card:
+            parts = card.split("\nA:")
+            if len(parts) == 2:
+                q = parts[0].replace("Q:", "").strip()
+                a = parts[1].strip()
+                if q and a:
+                    flashcards.append({"question": q, "answer": a})
+
+    daily_used = increment_daily_usage(username)
+
+    entry_id = str(uuid.uuid4())
+    save_to_history(username, {
+        "id": entry_id, "type": "folder_summary",
+        "filename": folder_name, "name": f"{folder_name} — Master Summary",
+        "created_at": datetime.now().isoformat(),
+        "notes": notes_md, "key_concepts": key_concepts,
+        "flashcards": flashcards,
+    })
+
+    logging.info(f"Folder summary: {username} / {folder_name} ({len(items)} items)")
+    return {
+        "success": True, "notes": notes_md, "key_concepts": key_concepts,
+        "flashcards": flashcards, "daily_used": daily_used, "daily_limit": DAILY_LIMIT,
+        "entry_id": entry_id,
+    }
 
 
 # ── Spaced repetition routes ───────────────────────────────────────────────────

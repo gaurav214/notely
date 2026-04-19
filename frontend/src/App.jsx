@@ -99,6 +99,10 @@ const Icon = {
   Pencil: (p = {}) => <svg {...iconProps} {...p}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>,
   Download: (p = {}) => <svg {...iconProps} {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>,
   Brain: (p = {}) => <svg {...iconProps} {...p}><path d="M9.5 2a2.5 2.5 0 0 1 5 0"/><path d="M14.5 2A2.5 2.5 0 0 1 17 4.5v1a2.5 2.5 0 0 1-2.5 2.5H10A2.5 2.5 0 0 1 7.5 5.5v-1A2.5 2.5 0 0 1 10 2"/><path d="M7.5 5.5A4.5 4.5 0 0 0 3 10c0 2 1 3.5 2.5 4.5v2A1.5 1.5 0 0 0 7 18h10a1.5 1.5 0 0 0 1.5-1.5v-2C20 13.5 21 12 21 10a4.5 4.5 0 0 0-4.5-4.5"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="10" y1="10" x2="14" y2="10"/></svg>,
+  Folder: (p = {}) => <svg {...iconProps} {...p}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /></svg>,
+  FolderPlus: (p = {}) => <svg {...iconProps} {...p}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /><line x1="12" y1="11" x2="12" y2="17" /><line x1="9" y1="14" x2="15" y2="14" /></svg>,
+  Trash: (p = {}) => <svg {...iconProps} {...p}><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14H6L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /><path d="M9 6V4h6v2" /></svg>,
+  Plus: (p = {}) => <svg {...iconProps} {...p}><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>,
 };
 
 /* ── Utility components ──────────────────────────────────────────────────────── */
@@ -160,7 +164,7 @@ function Header({ user, onNavigate, view, onFeedback }) {
       </button>
 
       <nav className="header-nav">
-        {[['notes', 'Notes'], ['flashcards', 'Flashcards'], ['history', 'History']].map(([v, label]) => (
+        {[['notes', 'Notes'], ['flashcards', 'Flashcards'], ['folders', 'Folders'], ['history', 'History']].map(([v, label]) => (
           <button key={v} className={`header-nav-item ${view === v ? 'active' : ''}`} onClick={() => onNavigate(v)}>
             {label}
           </button>
@@ -645,7 +649,7 @@ function FeatureCard({ icon, title, description, tag, onClick, disabled }) {
 }
 
 function NoteModal({ entry, onClose }) {
-  const isNotes = entry.type === 'notes' || entry.type === 'btech_notes';
+  const isNotes = entry.type === 'notes' || entry.type === 'btech_notes' || entry.type === 'folder_summary';
   useEffect(() => {
     function onKey(e) { if (e.key === 'Escape') onClose(); }
     document.addEventListener('keydown', onKey);
@@ -772,6 +776,13 @@ function Dashboard({ user, onNavigate, onUpdateDisplayName, onStudy }) {
               tag="Recall"
               onClick={() => onNavigate('flashcards')}
               disabled={remaining <= 0}
+            />
+            <FeatureCard
+              icon={<Icon.Folder width={16} height={16} />}
+              title="Topic Folders"
+              description="Group multiple uploads into one subject. Generate a combined summary and master flashcard deck."
+              tag="Organize"
+              onClick={() => onNavigate('folders')}
             />
           </div>
           {remaining <= 0 && (
@@ -1306,9 +1317,10 @@ function downloadNotesPDF(entry) {
 
 function HistoryItem({ entry, compact, expanded, onToggle, user, onRename, onStudy }) {
   const isNotes = entry.type === 'notes' || entry.type === 'btech_notes';
+  const isFolder = entry.type === 'folder_summary';
   const isCards = entry.type === 'competitive_flashcards';
-  const typeLabel = isNotes ? 'NOTES' : 'CARDS';
-  const badgeClass = isNotes ? 'badge-notes' : 'badge-cards';
+  const typeLabel = isNotes ? 'NOTES' : isFolder ? 'FOLDER' : 'CARDS';
+  const badgeClass = isNotes ? 'badge-notes' : isFolder ? 'badge-folder' : 'badge-cards';
   const [renaming, setRenaming] = useState(false);
   const [nameVal, setNameVal] = useState(entry.name || entry.filename);
   const inputRef = useRef();
@@ -1382,7 +1394,7 @@ function HistoryItem({ entry, compact, expanded, onToggle, user, onRename, onStu
       </div>
       {expanded && (
         <div className="history-content">
-          {isNotes && entry.notes && (
+          {(isNotes || isFolder) && entry.notes && (
             <>
               <div className="history-actions">
                 <button className="btn-secondary btn-sm" onClick={() => downloadNotesPDF(entry)}>
@@ -1392,9 +1404,9 @@ function HistoryItem({ entry, compact, expanded, onToggle, user, onRename, onStu
               <MarkdownBody content={entry.notes} />
             </>
           )}
-          {entry.type === 'competitive_flashcards' && entry.flashcards && (
+          {(entry.type === 'competitive_flashcards' || isFolder) && entry.flashcards && (
             <>
-              {onStudy && (
+              {onStudy && entry.type === 'competitive_flashcards' && (
                 <div className="history-actions">
                   <button className="btn btn-primary btn-sm" onClick={() => onStudy(entry)}>
                     <Icon.Brain width={12} height={12} /> Spaced study
@@ -1634,6 +1646,347 @@ function ResetPasswordPage({ token, onDone }) {
   );
 }
 
+/* ── Topic Folders ───────────────────────────────────────────────────────────── */
+
+function FoldersPage({ user, onNavigate, onOpenFolder, toast }) {
+  const [folders, setFolders] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState('');
+  const inputRef = useRef();
+
+  useEffect(() => {
+    api.get(`/api/folders?token=${user.token}`)
+      .then(d => setFolders(d.folders))
+      .catch(() => toast.show('Failed to load folders', 'error'))
+      .finally(() => setLoading(false));
+  }, [user.token]);
+
+  useEffect(() => { if (creating) inputRef.current?.focus(); }, [creating]);
+
+  async function handleCreate(e) {
+    e.preventDefault();
+    const name = newName.trim();
+    if (!name) return;
+    try {
+      const res = await api.post('/api/folders', { token: user.token, name });
+      const folder = { id: res.id, name: res.name, item_count: 0, created_at: new Date().toISOString() };
+      setFolders(f => [folder, ...f]);
+      setNewName('');
+      setCreating(false);
+      toast.show('Folder created', 'success');
+      onOpenFolder(folder);
+    } catch (e) { toast.show(e.message, 'error'); }
+  }
+
+  async function handleDelete(folder, ev) {
+    ev.stopPropagation();
+    if (!confirm(`Delete folder "${folder.name}"? The notes inside won't be deleted.`)) return;
+    try {
+      const r = await fetch(`${API_BASE}/api/folders/${folder.id}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: user.token }),
+      });
+      if (!r.ok) throw new Error((await r.json()).detail || 'Failed');
+      setFolders(f => f.filter(x => x.id !== folder.id));
+      toast.show('Folder deleted', 'success');
+    } catch (e) { toast.show(e.message, 'error'); }
+  }
+
+  return (
+    <div className="page">
+      <div className="container">
+        <div className="page-header">
+          <button className="back-btn" onClick={() => onNavigate('dashboard')}>
+            <Icon.ArrowLeft width={13} height={13} /> Back
+          </button>
+          <div>
+            <h1 className="page-title">Folders</h1>
+            <p className="page-sub">Group uploads into topics, then generate a master summary + flashcard deck.</p>
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 20 }}>
+          {creating ? (
+            <form onSubmit={handleCreate} className="folder-create-row">
+              <input ref={inputRef} className="input folder-create-input"
+                placeholder="e.g. Chemistry Midterm"
+                value={newName} onChange={e => setNewName(e.target.value)} />
+              <button className="btn btn-primary btn-sm" type="submit">Create</button>
+              <button className="btn btn-ghost btn-sm" type="button" onClick={() => { setCreating(false); setNewName(''); }}>Cancel</button>
+            </form>
+          ) : (
+            <button className="btn btn-primary" onClick={() => setCreating(true)}>
+              <Icon.FolderPlus width={14} height={14} /> New folder
+            </button>
+          )}
+        </div>
+
+        {loading ? (
+          <div className="loading-row"><Spinner /> Loading…</div>
+        ) : folders.length === 0 ? (
+          <div className="empty-state">
+            <Icon.Folder width={22} height={22} />
+            <p>No folders yet. Create one to group your uploads.</p>
+          </div>
+        ) : (
+          <div className="folder-grid">
+            {folders.map(folder => (
+              <button key={folder.id} className="folder-card" onClick={() => onOpenFolder(folder)}>
+                <div className="folder-card-icon"><Icon.Folder width={22} height={22} /></div>
+                <div className="folder-card-body">
+                  <p className="folder-card-name">{folder.name}</p>
+                  <p className="folder-card-meta">{folder.item_count} item{folder.item_count !== 1 ? 's' : ''} · {formatDate(folder.created_at)}</p>
+                </div>
+                <button className="icon-btn folder-delete-btn" title="Delete folder"
+                  onClick={ev => handleDelete(folder, ev)}>
+                  <Icon.Trash width={13} height={13} />
+                </button>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FolderDetailPage({ user, folder, onNavigate, onUsageUpdate, toast }) {
+  const [folderName, setFolderName] = useState(folder.name);
+  const [items, setItems] = useState([]);
+  const [allHistory, setAllHistory] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showPicker, setShowPicker] = useState(false);
+  const [pickerSelected, setPickerSelected] = useState(new Set());
+  const [generating, setGenerating] = useState(false);
+  const [result, setResult] = useState(null);
+  const [renamingFolder, setRenamingFolder] = useState(false);
+  const [renameVal, setRenameVal] = useState(folder.name);
+  const renameRef = useRef();
+
+  useEffect(() => { if (renamingFolder) renameRef.current?.focus(); }, [renamingFolder]);
+
+  useEffect(() => {
+    Promise.all([
+      api.get(`/api/folders/${folder.id}/items?token=${user.token}`),
+      api.get(`/api/history?token=${user.token}`),
+    ]).then(([fd, hd]) => {
+      setItems(fd.items);
+      setFolderName(fd.folder_name);
+      setRenameVal(fd.folder_name);
+      setAllHistory(hd.history);
+    }).catch(() => toast.show('Failed to load folder', 'error'))
+      .finally(() => setLoading(false));
+  }, [folder.id, user.token]);
+
+  async function submitRename() {
+    const trimmed = renameVal.trim();
+    setRenamingFolder(false);
+    if (!trimmed || trimmed === folderName) return;
+    try {
+      const r = await fetch(`${API_BASE}/api/folders/${folder.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: user.token, name: trimmed }),
+      });
+      if (!r.ok) throw new Error((await r.json()).detail || 'Failed');
+      setFolderName(trimmed);
+      toast.show('Folder renamed', 'success');
+    } catch (e) { toast.show(e.message, 'error'); setRenameVal(folderName); }
+  }
+
+  async function addItems() {
+    if (pickerSelected.size === 0) return;
+    try {
+      await api.post(`/api/folders/${folder.id}/items`, {
+        token: user.token, history_ids: [...pickerSelected],
+      });
+      const newItems = allHistory.filter(h => pickerSelected.has(h.id) && !items.find(i => i.id === h.id));
+      setItems(it => [...it, ...newItems]);
+      setShowPicker(false);
+      setPickerSelected(new Set());
+      toast.show(`${newItems.length} item${newItems.length !== 1 ? 's' : ''} added`, 'success');
+    } catch (e) { toast.show(e.message, 'error'); }
+  }
+
+  async function removeItem(historyId) {
+    const r = await fetch(`${API_BASE}/api/folders/${folder.id}/items/${historyId}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: user.token }),
+    });
+    if (!r.ok) { toast.show('Failed to remove item', 'error'); return; }
+    setItems(it => it.filter(i => i.id !== historyId));
+  }
+
+  async function handleGenerate() {
+    if (items.length === 0) { toast.show('Add items to the folder first', 'error'); return; }
+    setGenerating(true);
+    setResult(null);
+    try {
+      const data = await api.post(`/api/folders/${folder.id}/generate`, { token: user.token });
+      setResult(data);
+      onUsageUpdate(data.daily_used);
+      toast.show('Master summary generated!', 'success');
+    } catch (e) { toast.show(e.message, 'error'); }
+    finally { setGenerating(false); }
+  }
+
+  const availableToAdd = allHistory.filter(h => !items.find(i => i.id === h.id));
+  const keyConcepts = result?.key_concepts
+    ? result.key_concepts.split('\n').filter(l => l.trim().startsWith('-')).map(l => l.replace(/^-\s*/, '').trim()).filter(Boolean)
+    : [];
+
+  return (
+    <div className="page">
+      <div className="container">
+        <div className="page-header">
+          <button className="back-btn" onClick={() => onNavigate('folders')}>
+            <Icon.ArrowLeft width={13} height={13} /> Folders
+          </button>
+          <div style={{ flex: 1 }}>
+            {renamingFolder ? (
+              <input ref={renameRef} className="folder-rename-input"
+                value={renameVal} onChange={e => setRenameVal(e.target.value)}
+                onBlur={submitRename}
+                onKeyDown={e => { if (e.key === 'Enter') submitRename(); if (e.key === 'Escape') { setRenameVal(folderName); setRenamingFolder(false); } }} />
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <h1 className="page-title" style={{ margin: 0 }}>{folderName}</h1>
+                <button className="icon-btn" onClick={() => setRenamingFolder(true)}>
+                  <Icon.Pencil width={14} height={14} />
+                </button>
+              </div>
+            )}
+            <p className="page-sub">{items.length} item{items.length !== 1 ? 's' : ''} in this folder</p>
+          </div>
+        </div>
+
+        {/* Actions row */}
+        <div className="folder-actions-row">
+          <button className="btn btn-secondary" onClick={() => setShowPicker(true)}>
+            <Icon.Plus width={13} height={13} /> Add items
+          </button>
+          <button className="btn btn-primary" onClick={handleGenerate}
+            disabled={generating || items.length === 0 || user.daily_used >= user.daily_limit}>
+            {generating ? <><Spinner size={13} /> Generating…</> : <><Icon.Layers width={13} height={13} /> Generate master summary</>}
+          </button>
+        </div>
+        {user.daily_used >= user.daily_limit && (
+          <p className="limit-notice">Daily limit reached — can't generate today.</p>
+        )}
+
+        {/* Items in folder */}
+        {loading ? (
+          <div className="loading-row"><Spinner /> Loading…</div>
+        ) : items.length === 0 ? (
+          <div className="empty-state">
+            <Icon.Archive width={22} height={22} />
+            <p>No items yet. Click "Add items" to pick from your history.</p>
+          </div>
+        ) : (
+          <div className="history-list" style={{ marginBottom: 32 }}>
+            {items.map(entry => (
+              <div key={entry.id} className="history-item">
+                <span className={`badge ${entry.type === 'notes' || entry.type === 'btech_notes' ? 'badge-notes' : 'badge-cards'}`}>
+                  {entry.type === 'notes' || entry.type === 'btech_notes' ? 'NOTES' : 'CARDS'}
+                </span>
+                <span className="history-name">{entry.name || entry.filename}</span>
+                <span className="history-date">{formatDate(entry.created_at)}</span>
+                <button className="icon-btn" title="Remove from folder" onClick={() => removeItem(entry.id)}>
+                  <Icon.X width={13} height={13} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Generated result */}
+        {generating && (
+          <div className="result-placeholder">
+            <Spinner size={24} />
+            <p>Building master summary…</p>
+            <p className="placeholder-sub">30–60 seconds</p>
+          </div>
+        )}
+
+        {result && (
+          <div className="folder-result">
+            <div className="folder-result-header">
+              <h2 className="card-title">Master Summary — {folderName}</h2>
+              <button className="btn btn-secondary btn-sm" onClick={() => downloadNotesPDF({ name: `${folderName} — Master Summary`, notes: result.notes })}>
+                <Icon.Download /> PDF
+              </button>
+            </div>
+            {keyConcepts.length > 0 && (
+              <div className="concept-card" style={{ marginBottom: 16 }}>
+                <h3 className="card-title" style={{ marginBottom: 12 }}>Key concepts</h3>
+                <div className="concept-tags">
+                  {keyConcepts.map((c, i) => <span key={i} className="concept-tag">{c}</span>)}
+                </div>
+              </div>
+            )}
+            <div className="notes-card">
+              <MarkdownBody content={result.notes} />
+            </div>
+            {result.flashcards?.length > 0 && (
+              <>
+                <h2 className="card-title" style={{ marginTop: 28, marginBottom: 16 }}>
+                  Master Flashcards ({result.flashcards.length})
+                </h2>
+                <div className="cards-grid">
+                  {result.flashcards.map((c, i) => <FlipCard key={i} index={i} question={c.question} answer={c.answer} />)}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Item picker modal */}
+      {showPicker && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowPicker(false)}>
+          <div className="modal-card" style={{ maxWidth: 520 }}>
+            <div className="modal-header">
+              <h2 className="modal-title">Add items to folder</h2>
+              <button className="modal-close" onClick={() => setShowPicker(false)}><Icon.X /></button>
+            </div>
+            {availableToAdd.length === 0 ? (
+              <p style={{ fontSize: 13, color: 'var(--c-text-3)', padding: '8px 0' }}>All your history items are already in this folder.</p>
+            ) : (
+              <>
+                <p className="modal-sub">Select items from your history to add.</p>
+                <div className="picker-list">
+                  {availableToAdd.map(entry => {
+                    const isNotes = entry.type === 'notes' || entry.type === 'btech_notes';
+                    const sel = pickerSelected.has(entry.id);
+                    return (
+                      <button key={entry.id}
+                        className={`picker-item ${sel ? 'selected' : ''}`}
+                        onClick={() => setPickerSelected(s => { const n = new Set(s); sel ? n.delete(entry.id) : n.add(entry.id); return n; })}>
+                        <span className={`badge ${isNotes ? 'badge-notes' : 'badge-cards'}`}>{isNotes ? 'NOTES' : 'CARDS'}</span>
+                        <span className="picker-item-name">{entry.name || entry.filename}</span>
+                        {sel && <Icon.Check width={14} height={14} style={{ marginLeft: 'auto', color: 'var(--c-accent)', flexShrink: 0 }} />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+            <div className="modal-actions">
+              <button className="btn btn-ghost" onClick={() => setShowPicker(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={addItems} disabled={pickerSelected.size === 0}>
+                Add {pickerSelected.size > 0 ? pickerSelected.size : ''} item{pickerSelected.size !== 1 ? 's' : ''}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── Spaced Study Session ────────────────────────────────────────────────────── */
 
 function SpacedStudySession({ user, entry, onExit, toast }) {
@@ -1842,6 +2195,7 @@ export default function App() {
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [resetToken, setResetToken] = useState(_initialResetToken);
   const [studyEntry, setStudyEntry] = useState(null);
+  const [currentFolder, setCurrentFolder] = useState(null);
   const toast = useToast();
 
   useEffect(() => {
@@ -1915,6 +2269,11 @@ export default function App() {
     setView('spaced-study');
   }
 
+  function handleOpenFolder(folder) {
+    setCurrentFolder(folder);
+    setView('folder-detail');
+  }
+
   function handleUsageUpdate(daily_used) {
     setUser(u => u ? { ...u, daily_used } : u);
   }
@@ -1931,7 +2290,7 @@ export default function App() {
     <>
       <ToastStack toasts={toast.toasts} />
       {feedbackOpen && user && <FeedbackModal user={user} onClose={() => setFeedbackOpen(false)} toast={toast} />}
-      {view !== 'auth' && view !== 'landing' && view !== 'forgot-password' && view !== 'reset-password' && view !== 'spaced-study' && user && (
+      {view !== 'auth' && view !== 'landing' && view !== 'forgot-password' && view !== 'reset-password' && view !== 'spaced-study' && view !== 'folder-detail' && user && (
         <Header user={user} onNavigate={handleNavigate} view={view} onFeedback={() => setFeedbackOpen(true)} />
       )}
       <main className="main-content">
@@ -1944,6 +2303,10 @@ export default function App() {
         {view === 'flashcards' && user && <FlashcardsPage user={user} onNavigate={handleNavigate} onUsageUpdate={handleUsageUpdate} toast={toast} />}
         {view === 'history' && user && <HistoryPage user={user} onNavigate={handleNavigate} toast={toast} onStudy={handleStudy} />}
         {view === 'account' && user && <AccountPage user={user} onNavigate={handleNavigate} toast={toast} onUpdateUser={updates => setUser(u => ({ ...u, ...updates }))} />}
+        {view === 'folders' && user && <FoldersPage user={user} onNavigate={handleNavigate} onOpenFolder={handleOpenFolder} toast={toast} />}
+        {view === 'folder-detail' && user && currentFolder && (
+          <FolderDetailPage user={user} folder={currentFolder} onNavigate={handleNavigate} onUsageUpdate={handleUsageUpdate} toast={toast} />
+        )}
         {view === 'spaced-study' && user && studyEntry && (
           <SpacedStudySession user={user} entry={studyEntry} toast={toast}
             onExit={() => { setStudyEntry(null); setView('history'); }} />
