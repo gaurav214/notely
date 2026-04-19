@@ -881,6 +881,38 @@ async def remove_folder_item(folder_id: str, history_id: str, request: Request):
     return {"success": True}
 
 
+@app.post("/api/contact")
+async def contact(request: Request):
+    import smtplib
+    from email.mime.text import MIMEText
+    data = await request.json()
+    name    = data.get("name", "").strip()
+    email   = data.get("email", "").strip()
+    message = data.get("message", "").strip()
+    if not name or not email or not message:
+        raise HTTPException(400, "Name, email and message are required")
+
+    smtp_user  = os.getenv("SMTP_USER", "")
+    smtp_pass  = os.getenv("SMTP_PASSWORD", "")
+    notify_to  = os.getenv("NOTIFY_EMAIL", "frakz321@gmail.com")
+    if smtp_user and smtp_pass:
+        try:
+            body = f"Name: {name}\nEmail: {email}\n\n{message}"
+            msg = MIMEText(body)
+            msg["Subject"] = f"[Notely Contact] {name}"
+            msg["From"]    = smtp_user
+            msg["To"]      = notify_to
+            msg["Reply-To"] = email
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
+                s.login(smtp_user, smtp_pass)
+                s.send_message(msg)
+        except Exception as e:
+            logging.warning(f"Contact email failed: {e}")
+
+    logging.info(f"Contact from {email}: {name}")
+    return {"success": True}
+
+
 @app.post("/api/folders/{folder_id}/generate")
 async def generate_folder_summary(folder_id: str, request: Request):
     data = await request.json()

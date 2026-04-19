@@ -300,6 +300,93 @@ function FeedbackModal({ user, onClose, toast }) {
 
 /* ── Landing page ───────────────────────────────────────────────────────────── */
 
+function ContactSection() {
+  const [name, setName]       = useState('');
+  const [email, setEmail]     = useState('');
+  const [message, setMessage] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [sent, setSent]       = useState(false);
+  const [error, setError]     = useState('');
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    try {
+      await api.post('/api/contact', { name, email, message });
+      setSent(true);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <section id="contact" className="landing-section contact-section">
+      <div className="section-inner contact-inner">
+        <div className="contact-left">
+          <span className="landing-eyebrow">Contact</span>
+          <h2 className="landing-h2">Get in touch.</h2>
+          <p className="landing-lede" style={{ maxWidth: 360 }}>
+            Have a question, suggestion, or just want to say hi? We read every message and get back within 24 hours.
+          </p>
+          <div className="contact-info-list">
+            <div className="contact-info-item">
+              <span className="contact-info-dot" />
+              <span>Feature requests welcome</span>
+            </div>
+            <div className="contact-info-item">
+              <span className="contact-info-dot" />
+              <span>Bug reports appreciated</span>
+            </div>
+            <div className="contact-info-item">
+              <span className="contact-info-dot" />
+              <span>School / institution inquiries</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="contact-right">
+          {sent ? (
+            <div className="contact-success">
+              <div className="contact-success-icon"><Icon.CheckCircle width={40} height={40} /></div>
+              <h3>Message sent!</h3>
+              <p>Thanks for reaching out. We'll get back to you shortly.</p>
+            </div>
+          ) : (
+            <form className="contact-form" onSubmit={handleSubmit}>
+              <div className="contact-form-row">
+                <div className="form-group">
+                  <label className="form-label">Your name</label>
+                  <input className="input" type="text" placeholder="Jane Smith"
+                    value={name} onChange={e => setName(e.target.value)} required />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Email address</label>
+                  <input className="input" type="email" placeholder="jane@university.edu"
+                    value={email} onChange={e => setEmail(e.target.value)} required />
+                </div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Message</label>
+                <textarea className="input contact-textarea"
+                  placeholder="Tell us what's on your mind…"
+                  value={message} onChange={e => setMessage(e.target.value)}
+                  required rows={5} />
+              </div>
+              {error && <p className="form-error">{error}</p>}
+              <button className="btn btn-primary" type="submit" disabled={loading}>
+                {loading ? <><Spinner size={14} /> Sending…</> : 'Send message'}
+              </button>
+            </form>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function LandingPage({ onGetStarted }) {
   function scrollTo(id) {
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -316,6 +403,7 @@ function LandingPage({ onGetStarted }) {
             <button onClick={() => scrollTo('features')}>Features</button>
             <button onClick={() => scrollTo('how')}>How it works</button>
             <button onClick={() => scrollTo('faq')}>FAQ</button>
+            <button onClick={() => scrollTo('contact')}>Contact</button>
           </div>
           <div className="landing-nav-actions">
             <button className="btn btn-ghost" onClick={onGetStarted}>Sign in</button>
@@ -411,21 +499,21 @@ function LandingPage({ onGetStarted }) {
               color="card"
             />
             <LandingFeature
-              icon={<Icon.Play width={20} height={20} />}
-              title="Study mode"
-              desc="Focused review with keyboard shortcuts, progress tracking, and mastery marking."
+              icon={<Icon.Brain width={20} height={20} />}
+              title="Spaced repetition"
+              desc="Rate cards as Again, Good, or Easy. The SM-2 algorithm schedules reviews so you never forget."
               color="play"
             />
             <LandingFeature
-              icon={<Icon.Archive width={20} height={20} />}
-              title="History"
-              desc="Every generation saved. Revisit, re-study, and export anytime."
+              icon={<Icon.Folder width={20} height={20} />}
+              title="Topic folders"
+              desc="Group uploads by subject. Generate a combined master summary and flashcard deck from all of them."
               color="arch"
             />
             <LandingFeature
               icon={<Icon.File width={20} height={20} />}
               title="PDF & photo"
-              desc="JPG, PNG, BMP, PDF — anything you've got. Drag, drop, done."
+              desc="JPG, PNG, BMP, GIF, and PDF. Photos from your phone work great."
               color="file"
             />
             <LandingFeature
@@ -474,28 +562,38 @@ function LandingPage({ onGetStarted }) {
           <div className="faq-list">
             <details className="faq-item">
               <summary>Is Notely free?</summary>
-              <p>Yes. Every student gets a daily quota of generations at no cost. No card required.</p>
+              <p>Yes. Every student gets 10 free generations per day at no cost. No credit card required.</p>
             </details>
             <details className="faq-item">
               <summary>Which subjects does it work for?</summary>
-              <p>Anything legible — sciences, engineering, humanities, languages. Claude adapts the notes to the subject.</p>
+              <p>Anything legible — sciences, engineering, humanities, languages, math. Claude adapts the output to the subject automatically.</p>
             </details>
             <details className="faq-item">
               <summary>What file types can I upload?</summary>
-              <p>JPG, PNG, BMP, GIF, and PDF. Photos from your phone work great.</p>
+              <p>JPG, PNG, BMP, GIF, and PDF (up to 20 pages). Photos taken on your phone work great.</p>
+            </details>
+            <details className="faq-item">
+              <summary>What is spaced repetition?</summary>
+              <p>After studying flashcards, you rate each one as Again, Good, or Easy. Notely uses the SM-2 algorithm to schedule the next review — cards you find hard come back sooner, easy ones less often. It's the same method used by Anki.</p>
+            </details>
+            <details className="faq-item">
+              <summary>What are topic folders?</summary>
+              <p>Folders let you group related uploads — for example all lecture notes from one course. From a folder you can generate a single master summary and flashcard deck that covers everything inside it.</p>
             </details>
             <details className="faq-item">
               <summary>Do you store my notes?</summary>
-              <p>Only in your own history, so you can come back to past generations. You can delete them any time.</p>
+              <p>Only in your own account history so you can come back to past generations. You can delete individual entries or your entire account at any time.</p>
             </details>
           </div>
         </div>
       </section>
 
+      <ContactSection />
+
       <section className="final-cta">
         <div className="section-inner final-cta-inner">
           <h2>Ready to study smarter?</h2>
-          <p>Turn your next photo of notes into a study guide in seconds.</p>
+          <p>Turn your next photo of notes into a study guide in seconds — free, no card needed.</p>
           <button className="btn btn-primary btn-lg" onClick={onGetStarted}>
             Get started — free
           </button>
@@ -508,6 +606,12 @@ function LandingPage({ onGetStarted }) {
             <LogoMark size={22} />
             <span>Notely</span>
           </div>
+          <nav className="footer-links">
+            <button onClick={() => scrollTo('features')}>Features</button>
+            <button onClick={() => scrollTo('how')}>How it works</button>
+            <button onClick={() => scrollTo('faq')}>FAQ</button>
+            <button onClick={() => scrollTo('contact')}>Contact</button>
+          </nav>
           <p className="footer-meta">© 2026 Notely · Built for students.</p>
         </div>
       </footer>

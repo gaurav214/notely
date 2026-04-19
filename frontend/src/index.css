@@ -1923,3 +1923,102 @@ kbd {
 .picker-item:hover { border-color: var(--c-border-strong); background: var(--c-surface-hover); }
 .picker-item.selected { border-color: var(--c-accent); background: color-mix(in srgb, var(--c-accent) 8%, var(--c-surface-1)); }
 .picker-item-name { font-size: 13.5px; color: var(--c-text-1); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── Contact section ────────────────────────────────────────────────────────── */
+
+.contact-section {
+  background: var(--c-surface-2);
+  border-top: 1px solid var(--c-border);
+  border-bottom: 1px solid var(--c-border);
+}
+
+.contact-inner {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 64px;
+  align-items: start;
+}
+
+.contact-left { padding-top: 8px; }
+
+.contact-info-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 28px;
+}
+.contact-info-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--c-text-2);
+}
+.contact-info-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--c-accent);
+  flex-shrink: 0;
+}
+
+.contact-right {
+  background: var(--c-surface-1);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-lg);
+  padding: 32px;
+}
+
+.contact-form { display: flex; flex-direction: column; gap: 16px; }
+
+.contact-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.contact-textarea {
+  height: auto;
+  resize: vertical;
+  min-height: 120px;
+  font-family: inherit;
+}
+
+.contact-success {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+  padding: 32px 16px;
+  color: var(--c-success);
+}
+.contact-success h3 {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--c-text-1);
+  margin: 0;
+}
+.contact-success p {
+  font-size: 14px;
+  color: var(--c-text-3);
+  margin: 0;
+}
+
+/* Footer links */
+.footer-links {
+  display: flex;
+  gap: 20px;
+}
+.footer-links button {
+  font-size: 13px;
+  color: var(--c-text-3);
+  transition: color var(--dur) var(--ease);
+}
+.footer-links button:hover { color: var(--c-text-1); }
+
+@media (max-width: 768px) {
+  .contact-inner { grid-template-columns: 1fr; gap: 36px; }
+  .contact-form-row { grid-template-columns: 1fr; }
+  .footer-links { display: none; }
+}
