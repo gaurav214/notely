@@ -28,6 +28,10 @@ function MarkdownBody({ content }) {
 
 const API_BASE = import.meta.env.VITE_API_URL ?? '';
 
+// Capture reset token before React StrictMode double-fires effects
+const _initialResetToken = new URLSearchParams(window.location.search).get('reset_token');
+if (_initialResetToken) window.history.replaceState({}, '', window.location.pathname);
+
 const api = {
   async post(path, body) {
     const r = await fetch(`${API_BASE}${path}`, {
@@ -1643,10 +1647,10 @@ function HistoryPage({ user, onNavigate, toast }) {
 /* ── Root App ────────────────────────────────────────────────────────────────── */
 
 export default function App() {
-  const [view, setView] = useState('loading');
+  const [view, setView] = useState(_initialResetToken ? 'reset-password' : 'loading');
   const [user, setUser] = useState(null);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
-  const [resetToken, setResetToken] = useState(null);
+  const [resetToken, setResetToken] = useState(_initialResetToken);
   const toast = useToast();
 
   useEffect(() => {
@@ -1654,13 +1658,7 @@ export default function App() {
     const token = params.get('token');
     const username = params.get('username');
     const authError = params.get('auth_error');
-    const rt = params.get('reset_token');
-    if (rt) {
-      window.history.replaceState({}, '', window.location.pathname);
-      setResetToken(rt);
-      setView('reset-password');
-      return;
-    }
+    if (_initialResetToken) return;
 
     if (token && username) {
       window.history.replaceState({}, '', window.location.pathname);
