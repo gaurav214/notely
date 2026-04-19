@@ -393,6 +393,59 @@ h1, h2, h3, h4 {
   color: var(--c-text-4);
   text-align: center;
 }
+.forgot-link {
+  background: none; border: none; cursor: pointer;
+  font-size: 12.5px; color: var(--c-accent); text-align: center;
+  padding: 4px 0; margin-top: -4px;
+}
+.forgot-link:hover { text-decoration: underline; }
+
+/* ── Avatar dropdown ─────────────────────────────────────────────────────────── */
+.avatar-menu { position: relative; }
+.user-avatar {
+  width: 32px; height: 32px; border-radius: 50%;
+  background: var(--c-accent); color: #fff;
+  font-size: 13px; font-weight: 600;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; border: none; flex-shrink: 0;
+}
+.avatar-dropdown {
+  position: absolute; right: 0; top: calc(100% + 8px);
+  background: var(--c-surface-1); border: 1px solid var(--c-border);
+  border-radius: var(--r-md); box-shadow: var(--shadow-lg);
+  min-width: 200px; z-index: 200; padding: 6px;
+  animation: slideUp 0.15s var(--ease);
+}
+.avatar-dropdown-info { padding: 8px 10px 10px; border-bottom: 1px solid var(--c-border); margin-bottom: 4px; }
+.avatar-dropdown-name { display: block; font-size: 13px; font-weight: 600; color: var(--c-text-1); }
+.avatar-dropdown-email { display: block; font-size: 11.5px; color: var(--c-text-3); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.avatar-dropdown-divider { height: 1px; background: var(--c-border); margin: 4px 0; }
+.avatar-dropdown-item {
+  display: block; width: 100%; text-align: left;
+  background: none; border: none; cursor: pointer;
+  font-size: 13px; padding: 8px 10px; border-radius: var(--r-sm);
+  color: var(--c-text-1); transition: background var(--dur) var(--ease);
+}
+.avatar-dropdown-item:hover { background: var(--c-surface-2); }
+.avatar-dropdown-item.danger { color: #dc2626; }
+.avatar-dropdown-item.danger:hover { background: #fef2f2; }
+
+/* ── Account page ────────────────────────────────────────────────────────────── */
+.account-section {
+  background: var(--c-surface-1); border: 1px solid var(--c-border);
+  border-radius: var(--r-lg); padding: 24px; margin-bottom: 16px;
+}
+.account-section-title { font-size: 15px; font-weight: 600; margin: 0 0 16px; color: var(--c-text-1); }
+.account-section-desc { font-size: 13px; color: var(--c-text-3); margin: -8px 0 16px; }
+.danger-zone { border-color: #fecaca; }
+.danger-title { color: #dc2626; }
+.btn-danger {
+  background: #dc2626; color: #fff; border: none;
+  padding: 9px 18px; border-radius: var(--r-md); font-size: 13px;
+  font-weight: 500; cursor: pointer; transition: background var(--dur) var(--ease);
+}
+.btn-danger:hover { background: #b91c1c; }
+.delete-confirm { margin-top: 12px; }
 
 /* ── Dashboard ──────────────────────────────────────────────────────────────── */
 .dashboard-header {

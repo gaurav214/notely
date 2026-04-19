@@ -172,10 +172,41 @@ function Header({ user, onNavigate, view, onFeedback }) {
           <span className="usage-text">{user.daily_used}/{user.daily_limit}</span>
         </div>
         <button className="btn btn-ghost btn-sm feedback-header-btn" onClick={onFeedback}>Feedback</button>
-        <div className="user-avatar">{displayName(user.username)[0]?.toUpperCase() ?? '?'}</div>
-        <button className="btn btn-ghost" onClick={() => onNavigate('logout')}>Sign out</button>
+        <AvatarMenu user={user} onNavigate={onNavigate} />
       </div>
     </header>
+  );
+}
+
+function AvatarMenu({ user, onNavigate }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef();
+  useEffect(() => {
+    function handle(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    document.addEventListener('mousedown', handle);
+    return () => document.removeEventListener('mousedown', handle);
+  }, []);
+  return (
+    <div className="avatar-menu" ref={ref}>
+      <button className="user-avatar" onClick={() => setOpen(o => !o)}>
+        {(user.display_name || displayName(user.username))[0]?.toUpperCase() ?? '?'}
+      </button>
+      {open && (
+        <div className="avatar-dropdown">
+          <div className="avatar-dropdown-info">
+            <span className="avatar-dropdown-name">{user.display_name || displayName(user.username)}</span>
+            <span className="avatar-dropdown-email">{user.username}</span>
+          </div>
+          <div className="avatar-dropdown-divider" />
+          <button className="avatar-dropdown-item" onClick={() => { setOpen(false); onNavigate('account'); }}>
+            Account settings
+          </button>
+          <button className="avatar-dropdown-item danger" onClick={() => { setOpen(false); onNavigate('logout'); }}>
+            Sign out
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -487,7 +518,7 @@ function LandingFeature({ icon, title, desc, color }) {
 
 /* ── Auth page (minimal — form only) ─────────────────────────────────────────── */
 
-function AuthPage({ onLogin, onBack }) {
+function AuthPage({ onLogin, onBack, onForgot }) {
   const [tab, setTab] = useState('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -557,6 +588,9 @@ function AuthPage({ onLogin, onBack }) {
             {loading && <Spinner size={14} />}
             {tab === 'login' ? 'Sign in' : 'Create account'}
           </button>
+          {tab === 'login' && (
+            <button type="button" className="forgot-link" onClick={onForgot}>Forgot password?</button>
+          )}
         </form>
 
         {googleEnabled && (
@@ -1336,6 +1370,225 @@ function HistoryItem({ entry, compact, expanded, onToggle, user, onRename }) {
   );
 }
 
+/* ── Account page ────────────────────────────────────────────────────────────── */
+
+function AccountPage({ user, onNavigate, toast, onUpdateUser }) {
+  const [displayName_, setDisplayName_] = useState(user.display_name || displayName(user.username));
+  const [email, setEmail]               = useState(user.username);
+  const [currentPw, setCurrentPw]       = useState('');
+  const [newPw, setNewPw]               = useState('');
+  const [confirmPw, setConfirmPw]       = useState('');
+  const [deletePw, setDeletePw]         = useState('');
+  const [showDelete, setShowDelete]     = useState(false);
+  const [saving, setSaving]             = useState('');
+
+  async function saveProfile() {
+    setSaving('profile');
+    try {
+      if (displayName_ !== (user.display_name || displayName(user.username))) {
+        await api.post('/api/update-display-name', { token: user.token, display_name: displayName_ });
+        onUpdateUser({ display_name: displayName_ });
+      }
+      if (email !== user.username) {
+        await api.post('/api/update-email', { token: user.token, email });
+        onUpdateUser({ username: email });
+      }
+      toast.show('Profile updated', 'success');
+    } catch (e) { toast.show(e.message, 'error'); }
+    finally { setSaving(''); }
+  }
+
+  async function changePassword() {
+    if (newPw !== confirmPw) { toast.show('Passwords do not match', 'error'); return; }
+    setSaving('password');
+    try {
+      await api.post('/api/change-password', { token: user.token, current_password: currentPw, new_password: newPw });
+      setCurrentPw(''); setNewPw(''); setConfirmPw('');
+      toast.show('Password changed', 'success');
+    } catch (e) { toast.show(e.message, 'error'); }
+    finally { setSaving(''); }
+  }
+
+  async function deleteAccount() {
+    setSaving('delete');
+    try {
+      await api.post('/api/delete-account', { token: user.token, password: deletePw });
+      onNavigate('logout');
+    } catch (e) { toast.show(e.message, 'error'); setSaving(''); }
+  }
+
+  return (
+    <div className="page">
+      <div className="container" style={{ maxWidth: 560 }}>
+        <div className="page-header">
+          <button className="back-btn" onClick={() => onNavigate('dashboard')}>
+            <Icon.ArrowLeft width={13} height={13} /> Back
+          </button>
+          <h1 className="page-title">Account settings</h1>
+        </div>
+
+        {/* Profile */}
+        <div className="account-section">
+          <h2 className="account-section-title">Profile</h2>
+          <div className="form-group">
+            <label className="form-label">Display name</label>
+            <input className="input" value={displayName_} onChange={e => setDisplayName_(e.target.value)} placeholder="Your name" />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Email</label>
+            <input className="input" type="email" value={email} onChange={e => setEmail(e.target.value)} />
+          </div>
+          <button className="btn btn-primary" onClick={saveProfile} disabled={saving === 'profile'}>
+            {saving === 'profile' ? 'Saving…' : 'Save changes'}
+          </button>
+        </div>
+
+        {/* Password */}
+        <div className="account-section">
+          <h2 className="account-section-title">Change password</h2>
+          <div className="form-group">
+            <label className="form-label">Current password</label>
+            <input className="input" type="password" value={currentPw} onChange={e => setCurrentPw(e.target.value)} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">New password</label>
+            <input className="input" type="password" value={newPw} onChange={e => setNewPw(e.target.value)} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Confirm new password</label>
+            <input className="input" type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)} />
+          </div>
+          <button className="btn btn-primary" onClick={changePassword} disabled={saving === 'password' || !currentPw || !newPw}>
+            {saving === 'password' ? 'Updating…' : 'Update password'}
+          </button>
+        </div>
+
+        {/* Danger zone */}
+        <div className="account-section danger-zone">
+          <h2 className="account-section-title danger-title">Danger zone</h2>
+          <p className="account-section-desc">Permanently delete your account and all your notes and flashcards. This cannot be undone.</p>
+          {!showDelete ? (
+            <button className="btn btn-danger" onClick={() => setShowDelete(true)}>Delete account</button>
+          ) : (
+            <div className="delete-confirm">
+              <input className="input" type="password" placeholder="Enter your password to confirm"
+                value={deletePw} onChange={e => setDeletePw(e.target.value)} />
+              <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                <button className="btn btn-danger" onClick={deleteAccount} disabled={saving === 'delete' || !deletePw}>
+                  {saving === 'delete' ? 'Deleting…' : 'Yes, delete everything'}
+                </button>
+                <button className="btn btn-secondary" onClick={() => { setShowDelete(false); setDeletePw(''); }}>Cancel</button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Forgot / Reset password ─────────────────────────────────────────────────── */
+
+function ForgotPasswordPage({ onBack }) {
+  const [email, setEmail] = useState('');
+  const [sent, setSent]   = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      await api.post('/api/forgot-password', { email });
+      setSent(true);
+    } catch { setSent(true); } // always show success
+    finally { setLoading(false); }
+  }
+
+  return (
+    <div className="auth-layout">
+      <button className="auth-back" onClick={onBack}><Icon.ArrowLeft width={13} height={13} /> Back</button>
+      <div className="auth-card">
+        <div className="auth-logo"><LogoMark size={24} /><span>Notely</span></div>
+        {sent ? (
+          <>
+            <p className="auth-welcome">Check your email</p>
+            <p style={{ fontSize: 13, color: 'var(--c-text-3)', marginTop: 8 }}>
+              If an account exists for <strong>{email}</strong>, you'll receive a reset link shortly.
+            </p>
+            <button className="btn btn-primary" style={{ marginTop: 20, width: '100%' }} onClick={onBack}>Back to sign in</button>
+          </>
+        ) : (
+          <>
+            <p className="auth-welcome">Reset your password</p>
+            <form onSubmit={handleSubmit} className="auth-form">
+              <div className="form-group">
+                <label className="form-label">Email</label>
+                <input className="input" type="email" placeholder="you@example.com"
+                  value={email} onChange={e => setEmail(e.target.value)} required />
+              </div>
+              <button className="btn btn-primary auth-submit" type="submit" disabled={loading}>
+                {loading ? 'Sending…' : 'Send reset link'}
+              </button>
+            </form>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ResetPasswordPage({ token, onDone }) {
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm]   = useState('');
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState('');
+  const [done, setDone]         = useState(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (password !== confirm) { setError('Passwords do not match'); return; }
+    setLoading(true); setError('');
+    try {
+      await api.post('/api/reset-password', { token, password });
+      setDone(true);
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  }
+
+  return (
+    <div className="auth-layout">
+      <div className="auth-card">
+        <div className="auth-logo"><LogoMark size={24} /><span>Notely</span></div>
+        {done ? (
+          <>
+            <p className="auth-welcome">Password reset!</p>
+            <p style={{ fontSize: 13, color: 'var(--c-text-3)', marginTop: 8 }}>You can now sign in with your new password.</p>
+            <button className="btn btn-primary" style={{ marginTop: 20, width: '100%' }} onClick={onDone}>Sign in</button>
+          </>
+        ) : (
+          <>
+            <p className="auth-welcome">Set a new password</p>
+            <form onSubmit={handleSubmit} className="auth-form">
+              <div className="form-group">
+                <label className="form-label">New password</label>
+                <input className="input" type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={6} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Confirm password</label>
+                <input className="input" type="password" value={confirm} onChange={e => setConfirm(e.target.value)} required />
+              </div>
+              {error && <p className="auth-error">{error}</p>}
+              <button className="btn btn-primary auth-submit" type="submit" disabled={loading}>
+                {loading ? 'Saving…' : 'Set new password'}
+              </button>
+            </form>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function HistoryPage({ user, onNavigate, toast }) {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1393,6 +1646,7 @@ export default function App() {
   const [view, setView] = useState('loading');
   const [user, setUser] = useState(null);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [resetToken, setResetToken] = useState(null);
   const toast = useToast();
 
   useEffect(() => {
@@ -1400,6 +1654,13 @@ export default function App() {
     const token = params.get('token');
     const username = params.get('username');
     const authError = params.get('auth_error');
+    const rt = params.get('reset_token');
+    if (rt) {
+      window.history.replaceState({}, '', window.location.pathname);
+      setResetToken(rt);
+      setView('reset-password');
+      return;
+    }
 
     if (token && username) {
       window.history.replaceState({}, '', window.location.pathname);
@@ -1476,14 +1737,19 @@ export default function App() {
     <>
       <ToastStack toasts={toast.toasts} />
       {feedbackOpen && user && <FeedbackModal user={user} onClose={() => setFeedbackOpen(false)} toast={toast} />}
-      {view !== 'auth' && view !== 'landing' && user && <Header user={user} onNavigate={handleNavigate} view={view} onFeedback={() => setFeedbackOpen(true)} />}
+      {view !== 'auth' && view !== 'landing' && view !== 'forgot-password' && view !== 'reset-password' && user && (
+        <Header user={user} onNavigate={handleNavigate} view={view} onFeedback={() => setFeedbackOpen(true)} />
+      )}
       <main className="main-content">
         {view === 'landing' && <LandingPage onGetStarted={() => setView('auth')} />}
-        {view === 'auth' && <AuthPage onLogin={handleLogin} onBack={() => setView('landing')} />}
+        {view === 'auth' && <AuthPage onLogin={handleLogin} onBack={() => setView('landing')} onForgot={() => setView('forgot-password')} />}
+        {view === 'forgot-password' && <ForgotPasswordPage onBack={() => setView('auth')} />}
+        {view === 'reset-password' && <ResetPasswordPage token={resetToken} onDone={() => { setResetToken(null); setView('auth'); }} />}
         {view === 'dashboard' && user && <Dashboard user={user} onNavigate={handleNavigate} onUpdateDisplayName={name => setUser(u => ({ ...u, display_name: name }))} />}
         {view === 'notes' && user && <NotesPage user={user} onNavigate={handleNavigate} onUsageUpdate={handleUsageUpdate} toast={toast} />}
         {view === 'flashcards' && user && <FlashcardsPage user={user} onNavigate={handleNavigate} onUsageUpdate={handleUsageUpdate} toast={toast} />}
         {view === 'history' && user && <HistoryPage user={user} onNavigate={handleNavigate} toast={toast} />}
+        {view === 'account' && user && <AccountPage user={user} onNavigate={handleNavigate} toast={toast} onUpdateUser={updates => setUser(u => ({ ...u, ...updates }))} />}
       </main>
     </>
   );

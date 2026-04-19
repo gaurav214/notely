@@ -58,6 +58,8 @@ FRONTEND_URL          = os.getenv("FRONTEND_URL", "http://localhost:5175")
 # In-memory sessions (token → username). Cleared on restart — acceptable.
 active_sessions: dict[str, str] = {}
 _google_states:  dict[str, bool] = {}
+_reset_tokens:   dict[str, dict] = {}   # token → {username, expires}
+_reg_attempts:   dict[str, list] = {}   # ip → [timestamps]
 
 
 # ── Database ───────────────────────────────────────────────────────────────────
@@ -360,9 +362,18 @@ async def get_stats():
 
 @app.post("/api/register")
 async def register(request: Request):
+    import time
     data = await request.json()
     username = data.get("username", "").strip().lower()
     password = data.get("password", "")
+
+    # Rate limit: max 3 registrations per IP per hour
+    ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    attempts = [t for t in _reg_attempts.get(ip, []) if now - t < 3600]
+    if len(attempts) >= 3:
+        raise HTTPException(429, "Too many accounts created. Try again later.")
+    _reg_attempts[ip] = attempts + [now]
 
     if len(username) < 3:
         raise HTTPException(400, "Email too short")
@@ -400,6 +411,114 @@ async def login(request: Request):
 async def logout(request: Request):
     data = await request.json()
     active_sessions.pop(data.get("token"), None)
+    return {"success": True}
+
+
+@app.post("/api/forgot-password")
+async def forgot_password(request: Request):
+    import smtplib, time
+    from email.mime.text import MIMEText
+    data = await request.json()
+    email = data.get("email", "").strip().lower()
+    if not email:
+        raise HTTPException(400, "Email required")
+    user = get_user(email)
+    # Always return success to avoid user enumeration
+    if user and user.get("password_hash"):
+        token = secrets.token_urlsafe(32)
+        _reset_tokens[token] = {"username": email, "expires": time.time() + 3600}
+        reset_url = f"{FRONTEND_URL}?reset_token={token}"
+        smtp_user = os.getenv("SMTP_USER", "")
+        smtp_pass = os.getenv("SMTP_PASSWORD", "")
+        if smtp_user and smtp_pass:
+            try:
+                msg = MIMEText(f"Hi,\n\nClick the link below to reset your Notely password (expires in 1 hour):\n\n{reset_url}\n\nIf you didn't request this, ignore this email.")
+                msg["Subject"] = "Reset your Notely password"
+                msg["From"] = smtp_user
+                msg["To"] = email
+                with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
+                    s.login(smtp_user, smtp_pass)
+                    s.send_message(msg)
+                logging.info(f"Password reset email sent to {email}")
+            except Exception as e:
+                logging.warning(f"Reset email failed: {e}")
+    return {"success": True, "message": "If that email exists, a reset link has been sent."}
+
+
+@app.post("/api/reset-password")
+async def reset_password(request: Request):
+    import time
+    data = await request.json()
+    token = data.get("token", "")
+    new_password = data.get("password", "")
+    if len(new_password) < 6:
+        raise HTTPException(400, "Password must be at least 6 characters")
+    entry = _reset_tokens.get(token)
+    if not entry or time.time() > entry["expires"]:
+        raise HTTPException(400, "Reset link is invalid or expired")
+    pw_hash, salt = hash_password(new_password)
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET password_hash=%s, salt=%s WHERE username=%s",
+                    (pw_hash, salt, entry["username"]))
+    _reset_tokens.pop(token, None)
+    return {"success": True}
+
+
+@app.post("/api/change-password")
+async def change_password(request: Request):
+    data = await request.json()
+    username = validate_token(data.get("token", ""))
+    if not username:
+        raise HTTPException(401, "Invalid session")
+    current = data.get("current_password", "")
+    new_pw = data.get("new_password", "")
+    if len(new_pw) < 6:
+        raise HTTPException(400, "Password must be at least 6 characters")
+    user = get_user(username)
+    if not user or not verify_password(current, user["password_hash"], user["salt"]):
+        raise HTTPException(400, "Current password is incorrect")
+    pw_hash, salt = hash_password(new_pw)
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET password_hash=%s, salt=%s WHERE username=%s",
+                    (pw_hash, salt, username))
+    return {"success": True}
+
+
+@app.post("/api/update-email")
+async def update_email(request: Request):
+    data = await request.json()
+    username = validate_token(data.get("token", ""))
+    if not username:
+        raise HTTPException(401, "Invalid session")
+    new_email = data.get("email", "").strip().lower()
+    if not new_email or "@" not in new_email:
+        raise HTTPException(400, "Valid email required")
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET email=%s WHERE username=%s", (new_email, username))
+    return {"success": True}
+
+
+@app.delete("/api/delete-account")
+async def delete_account(request: Request):
+    data = await request.json()
+    username = validate_token(data.get("token", ""))
+    if not username:
+        raise HTTPException(401, "Invalid session")
+    password = data.get("password", "")
+    user = get_user(username)
+    if not user or not verify_password(password, user["password_hash"], user["salt"]):
+        raise HTTPException(400, "Incorrect password")
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM history WHERE username=%s", (username,))
+        cur.execute("DELETE FROM daily_usage WHERE username=%s", (username,))
+        cur.execute("DELETE FROM feedback WHERE username=%s", (username,))
+        cur.execute("DELETE FROM users WHERE username=%s", (username,))
+    active_sessions.pop(data.get("token"), None)
+    logging.info(f"Account deleted: {username}")
     return {"success": True}
 
 
